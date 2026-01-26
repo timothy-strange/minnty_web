@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Minnty Labs">
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#f2f4f7" stroke="#1f4fbf" stroke-width="2" />
+  <circle cx="32" cy="32" r="10" fill="#1f4fbf" />
+  <polygon points="28,32 14,22 14,42" fill="#1f4fbf" />
+  <polygon points="36,32 50,22 50,42" fill="#1f4fbf" />
+</svg>

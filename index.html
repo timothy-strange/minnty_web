@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Minnty Labs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <button class="theme-toggle" type="button" aria-pressed="false">
+      Dark mode
+    </button>
+    <main class="hero">
+      <h1>Minnty Labs</h1>
+      <p>Welcome to Minnty Labs. Website coming soon.</p>
+    </main>
+    <script>
+      const button = document.querySelector(".theme-toggle");
+      const body = document.body;
+
+      const setTheme = (mode) => {
+        body.dataset.theme = mode;
+        const isDark = mode === "dark";
+        button.setAttribute("aria-pressed", String(isDark));
+        button.textContent = isDark ? "Light mode" : "Dark mode";
+      };
+
+      button.addEventListener("click", () => {
+        const next = body.dataset.theme === "dark" ? "light" : "dark";
+        setTheme(next);
+      });
+
+      setTheme("light");
+    </script>
+  </body>
+</html>
