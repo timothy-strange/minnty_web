@@ -134,18 +134,52 @@ var MUSIC_CHUNKS = [
   {m:[72,76,79,76, 83,79,76,79, 74,78,81,78, 85,81,78,81], b:[36,36,36,36, 43,43,43,43, 38,38,38,38, 45,45,45,45], d:"light"},
   {m:[79,81,83,86, 83,81,79,76, 74,76,78,81, 78,76,74,71], b:[43,43,41,41, 40,40,38,38, 36,36,35,35, 33,33,35,35], d:"busy"}
 ];
+// Downbeat atmospheric trip-hop, ~90bpm, centred on A minor so any chunk follows any
+// other when shuffled. Each chunk = 16 eighth-note steps (2 bars). b = dubby bass,
+// m = reverby lead (sparse, with rests for the echo tails), p = sustained maj7 pad
+// chords for a yearning feel. Two chunks use the minor line cliché (the descending
+// A - G# - G - F# voice): #1 as an inner pad voice, #5 as the chromatic bass.
 var TRIP_CHUNKS = [
-  {m:[76,null,79,83, 81,null,79,null, 76,null,74,72, 71,null,72,null], b:[28,28,35,35, 33,33,40,40, 31,31,38,38, 35,35,42,42], d:"dub"},
-  {m:[79,null,83,86, 84,null,83,null, 81,null,79,76, 74,null,76,null], b:[33,33,40,40, 32,32,39,39, 31,31,38,38, 30,30,37,37], d:"dub"},
-  {m:[72,null,76,79, 83,null,81,null, 79,null,76,74, 72,null,71,null], b:[24,24,31,31, 28,28,35,35, 29,29,36,36, 31,31,38,38], d:"break"},
-  {m:[84,null,83,81, 79,null,78,76, 74,null,72,71, 69,null,71,null], b:[36,36,35,35, 34,34,33,33, 32,32,31,31, 30,30,31,31], d:"line"},
-  {m:[83,null,86,88, 86,null,83,null, 81,null,78,76, 74,null,78,null], b:[31,31,38,38, 35,35,42,42, 30,30,37,37, 33,33,40,40], d:"dub"},
-  {m:[76,null,74,72, 71,null,69,null, 72,null,76,79, 81,null,79,null], b:[28,28,28,35, 27,27,27,34, 26,26,26,33, 25,25,25,32], d:"break"},
-  {m:[81,null,83,79, 76,null,79,null, 74,null,76,72, 69,null,72,null], b:[29,29,36,36, 33,33,40,40, 28,28,35,35, 31,31,38,38], d:"dub"},
-  {m:[88,null,86,83, 81,null,79,null, 76,null,74,72, 71,null,69,null], b:[36,36,43,43, 35,35,42,42, 33,33,40,40, 31,31,38,38], d:"line"},
-  {m:[74,null,78,81, 85,null,83,null, 81,null,78,74, 73,null,76,null], b:[26,26,33,33, 30,30,37,37, 31,31,38,38, 33,33,40,40], d:"dub"},
-  {m:[79,null,76,72, 71,null,72,null, 76,null,79,83, 81,null,79,null], b:[31,31,31,38, 30,30,30,37, 28,28,28,35, 27,27,27,34], d:"break"},
-  {m:[83,null,81,79, 78,null,76,null, 74,null,72,71, 72,null,76,null], b:[35,35,42,42, 34,34,41,41, 33,33,40,40, 32,32,39,39], d:"line"}
+  // 1 — Am line cliché (inner voice Am, Am(maj7), Am7, Am6); lead echoes it up high
+  {b:[33,null,null,null, null,null,33,null, 33,null,null,null, null,null,33,null],
+   m:[69,null,null,null, 68,null,null,null, 67,null,null,null, 66,null,null,null],
+   p:[{s:0,n:[57,60,64],d:4},{s:4,n:[57,60,64,68],d:4},{s:8,n:[57,60,64,67],d:4},{s:12,n:[57,60,64,66],d:4}], d:"full"},
+  // 2 — Fmaj7 (the E natural-7th yearning)
+  {b:[29,null,null,null, null,null,29,null, 36,null,null,null, null,null,29,null],
+   m:[72,null,76,null, 74,null,null,null, 72,null,69,null, 67,null,69,null],
+   p:[{s:0,n:[53,57,60,64],d:8},{s:8,n:[53,57,60,64],d:8}], d:"full"},
+  // 3 — Cmaj7 (the B natural-7th)
+  {b:[36,null,null,null, null,null,36,null, 31,null,null,null, null,null,36,null],
+   m:[71,null,null,79, null,76,null,null, 74,null,72,null, 71,null,null,null],
+   p:[{s:0,n:[48,52,55,59],d:16}], d:"full"},
+  // 4 — Dm9
+  {b:[38,null,null,null, null,null,33,null, 38,null,null,null, null,null,40,null],
+   m:[null,null,69,null, 72,null,69,null, null,null,67,null, 65,null,62,null],
+   p:[{s:0,n:[50,53,57,60],d:8},{s:8,n:[50,53,57,60,64],d:8}], d:"full"},
+  // 5 — Am with descending chromatic bass line cliché (A G# G F#)
+  {b:[33,null,null,null, 32,null,null,null, 31,null,null,null, 30,null,null,null],
+   m:[76,null,null,null, null,null,74,null, 72,null,null,null, null,null,71,null],
+   p:[{s:0,n:[57,60,64],d:16}], d:"full"},
+  // 6 — Gmaj7 (bVII, a wistful lift)
+  {b:[31,null,null,null, null,null,38,null, 31,null,null,null, null,null,31,null],
+   m:[null,74,null,71, 74,null,79,null, 78,null,74,null, 71,null,null,null],
+   p:[{s:0,n:[55,59,62,66],d:16}], d:"full"},
+  // 7 — Em7 (the melancholy v)
+  {b:[40,null,null,null, null,null,35,null, 40,null,null,null, null,null,40,null],
+   m:[79,null,76,null, 74,null,null,null, 71,null,74,null, 76,null,null,null],
+   p:[{s:0,n:[52,55,59,62],d:16}], d:"full"},
+  // 8 — Fmaj7 -> E (the mournful loss cadence; G# leading-tone tension)
+  {b:[29,null,null,null, null,null,29,null, 40,null,null,null, null,null,40,null],
+   m:[null,null,72,null, 76,null,null,null, null,null,68,null, 71,null,68,null],
+   p:[{s:0,n:[53,57,60,64],d:8},{s:8,n:[52,56,59],d:8}], d:"full"},
+  // 9 — Am9 break: drums drop, just pad + bass + a sparse low line, very spacious
+  {b:[33,null,null,null, null,null,null,null, 33,null,null,null, null,null,null,null],
+   m:[null,null,null,null, 64,null,null,null, null,null,null,null, 62,null,null,null],
+   p:[{s:0,n:[57,60,64,67,71],d:16}], d:"break"},
+  // 10 — Dm7 -> Cmaj7 gentle motion
+  {b:[38,null,null,null, 31,null,null,null, 36,null,null,null, null,null,40,null],
+   m:[69,null,72,null, 74,null,72,null, 71,null,72,null, 76,null,null,null],
+   p:[{s:0,n:[50,53,57,60],d:8},{s:8,n:[48,52,55,59],d:8}], d:"full"}
 ];
 var MUSIC_TRACKS = [
   {name:"chip", bpm:132, chunks:MUSIC_CHUNKS},
@@ -179,20 +213,102 @@ function noiseHit(t, dur, vol){
   g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
   src.buffer = buf; src.connect(f); f.connect(g); g.connect(ac.destination); src.start(t);
 }
+
+// ---- Trip-hop voices on a shared reverb + dub-delay bus (built lazily, reused) ----
+// The whole trip track plays through one gain -> compressor master so it stays mellow
+// and glued; the chip track and SFX are untouched (they go straight to destination).
+var fx = null;
+function makeImpulse(ac, dur, decay){
+  var len = Math.max(1, Math.floor(ac.sampleRate*dur));
+  var buf = ac.createBuffer(2, len, ac.sampleRate);
+  for(var ch=0; ch<2; ch++){
+    var d = buf.getChannelData(ch);
+    for(var i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, decay);
+  }
+  return buf;
+}
+function ensureFx(){
+  var ac = ensureAudioCtx(); if(!ac) return null;
+  if(fx && fx.ac === ac) return fx;
+  var master = ac.createGain(); master.gain.value = 0.85;
+  var comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -10; comp.knee.value = 22; comp.ratio.value = 6;
+  comp.attack.value = 0.004; comp.release.value = 0.18;
+  master.connect(comp); comp.connect(ac.destination);
+  var reverb = ac.createConvolver(); reverb.buffer = makeImpulse(ac, 2.8, 2.6);
+  var revGain = ac.createGain(); revGain.gain.value = 0.7;
+  reverb.connect(revGain); revGain.connect(master);
+  var delay = ac.createDelay(2.0); delay.delayTime.value = (60/90)*0.75;   // dotted-8th dub echo
+  var fb = ac.createGain(); fb.gain.value = 0.32;
+  var delayWet = ac.createGain(); delayWet.gain.value = 0.4;
+  delay.connect(fb); fb.connect(delay);                 // feedback
+  delay.connect(delayWet); delayWet.connect(master);
+  delay.connect(reverb);                                // smear echoes into the reverb
+  fx = {ac:ac, master:master, reverb:reverb, delay:delay};
+  return fx;
+}
+function tripKick(t){
+  var fxb = ensureFx(); if(!fxb) return; var ac = fxb.ac;
+  var o = ac.createOscillator(), g = ac.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(95, t); o.frequency.exponentialRampToValueAtTime(40, t+0.13);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.28);
+  o.connect(g); g.connect(fxb.master); o.start(t); o.stop(t+0.3);
+}
+function tripNoise(t, dur, ftype, freq, Q, vol, send){
+  var fxb = ensureFx(); if(!fxb) return; var ac = fxb.ac;
+  var len = Math.max(1, Math.floor(ac.sampleRate*dur));
+  var buf = ac.createBuffer(1, len, ac.sampleRate), dd = buf.getChannelData(0);
+  for(var i=0;i<len;i++) dd[i] = Math.random()*2-1;
+  var src = ac.createBufferSource(); src.buffer = buf;
+  var f = ac.createBiquadFilter(); f.type = ftype; f.frequency.value = freq; if(Q) f.Q.value = Q;
+  var g = ac.createGain();
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  src.connect(f); f.connect(g); g.connect(fxb.master);
+  if(send){ var s = ac.createGain(); s.gain.value = send; g.connect(s); s.connect(fxb.reverb); }
+  src.start(t);
+}
+function tripSnare(t){ tripNoise(t, 0.18, "bandpass", 1900, 0.8, 0.17, 0.4); }  // dusty, roomy
+function tripHat(t, vol){ tripNoise(t, 0.03, "highpass", 7000, 0, vol, 0); }
+// One or more detuned osc pairs through a lowpass, with optional reverb/delay sends.
+// conf: {t1,t2 wave types, det cents, lp Hz, vol, atk, rel, rev, dly}. Notes are MIDI.
+function tripVoice(notes, t, dur, conf){
+  var fxb = ensureFx(); if(!fxb) return; var ac = fxb.ac;
+  for(var i=0;i<notes.length;i++){
+    var freq = noteHz(notes[i]);
+    var o = ac.createOscillator(), o2 = ac.createOscillator(), g = ac.createGain(), lp = ac.createBiquadFilter();
+    o.type = conf.t1; o.frequency.value = freq;
+    o2.type = conf.t2; o2.frequency.value = freq; o2.detune.value = conf.det;
+    lp.type = "lowpass"; lp.frequency.value = conf.lp;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(conf.vol, t+conf.atk);
+    if(dur - conf.rel > conf.atk) g.gain.setValueAtTime(conf.vol, t+dur-conf.rel);  // hold
+    g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+    o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(fxb.master);
+    if(conf.rev){ var rv = ac.createGain(); rv.gain.value = conf.rev; g.connect(rv); rv.connect(fxb.reverb); }
+    if(conf.dly){ var dl = ac.createGain(); dl.gain.value = conf.dly; g.connect(dl); dl.connect(fxb.delay); }
+    o.start(t); o2.start(t); o.stop(t+dur+0.1); o2.stop(t+dur+0.1);
+  }
+}
+function tripBass(n, t, dur){ tripVoice([n], t, dur, {t1:"sine", t2:"triangle", det:-6, lp:260, vol:0.42, atk:0.03, rel:0.12, rev:0, dly:0.12}); }
+function tripLead(n, t, dur){ tripVoice([n], t, dur, {t1:"triangle", t2:"sine", det:4, lp:2600, vol:0.14, atk:0.02, rel:0.1, rev:0.5, dly:0.4}); }
+function tripPad(notes, t, dur){ tripVoice(notes, t, dur, {t1:"triangle", t2:"sine", det:-7, lp:1600, vol:0.045, atk:0.35, rel:0.7, rev:0.8, dly:0}); }
 function currentMusicTrack(){ return MUSIC_TRACKS[musicTrack]; }
 function updateMusicStep(){ MUSIC_STEP = 60 / currentMusicTrack().bpm / 2; }
 function pickMusicChunk(){ var chunks = currentMusicTrack().chunks; return chunks[Math.floor(Math.random()*chunks.length)]; }
 function scheduleTripHopStep(t, s){
-  var d = musicChunk.d;
-  if(s === 0 || s === 6 || s === 10) blip(43, t, 0.12, "sine", 0.36);
-  if(d !== "break" && (s === 4 || s === 12)) noiseHit(t, 0.09, 0.13);
-  if(d === "dub" && (s === 3 || s === 7 || s === 11 || s === 15)) noiseHit(t, 0.025, 0.035);
-  if(musicChunk.b[s] != null) blip(noteHz(musicChunk.b[s]), t, d === "break" ? 0.34 : 0.28, "sine", 0.28);
-  if(musicChunk.m[s] != null){
-    blip(noteHz(musicChunk.m[s]), t, 0.18, "triangle", 0.13);
-    blip(noteHz(musicChunk.m[s]), t+0.18, 0.16, "triangle", 0.055);
-    blip(noteHz(musicChunk.m[s]+12), t+0.36, 0.12, "sine", 0.025);
+  var c = musicChunk, d = c.d, half = MUSIC_STEP/2;
+  // halftime groove: kick on the 1 (+ a syncopated push), dusty snare on the 3
+  if(d !== "break"){
+    if(s === 0 || s === 8 || s === 11) tripKick(t);
+    if(s === 4 || s === 12) tripSnare(t);
+    if(s === 2 || s === 6 || s === 10 || s === 14) tripHat(t+half, 0.03);   // 16th shuffle
   }
+  tripHat(t, s % 2 === 0 ? 0.055 : 0.035);
+  if(c.b[s] != null) tripBass(c.b[s], t, MUSIC_STEP*1.6);
+  if(c.m[s] != null) tripLead(c.m[s], t, MUSIC_STEP*1.8);
+  if(c.p){ for(var i=0;i<c.p.length;i++){ if(c.p[i].s === s) tripPad(c.p[i].n, t, c.p[i].d*MUSIC_STEP); } }
 }
 function scheduleMusicStep(t){
   var s = musicStep % 16;
