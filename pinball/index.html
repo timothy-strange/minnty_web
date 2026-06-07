@@ -59,9 +59,12 @@
     </span>
   </div>
 </div>
-<script src="box2d.js"></script>
-<script src="geom.js"></script>
-<script src="encouragements.js"></script>
-<script src="game.js"></script>
+<!-- ?v= cache-buster: the host serves .js with a 30-day cache, so bump this version
+     on each deploy to force browsers to fetch updated scripts (index.html itself is
+     revalidated each visit, so the new version propagates immediately). -->
+<script src="box2d.js?v=2"></script>
+<script src="geom.js?v=2"></script>
+<script src="encouragements.js?v=2"></script>
+<script src="game.js?v=2"></script>
 </body>
 </html>
