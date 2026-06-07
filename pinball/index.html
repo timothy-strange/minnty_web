@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Minty Pinball</title>
+<style>
+  html,body{margin:0;height:100%;background:#05050f;color:#fff;
+    font-family:"Trebuchet MS",Arial,sans-serif;overflow:hidden}
+  #stage{position:relative;height:100%;display:flex;align-items:center;justify-content:center;gap:16px}
+  canvas{border:2px solid #3b5bdb;border-radius:8px;box-shadow:0 0 30px #1b2a6b}
+  /* side panels (shown only when the window is wide enough; sized by fitView) */
+  .panel{box-sizing:border-box;display:none;flex-direction:column;overflow:hidden;
+    background:rgba(6,6,22,0.78);border:2px solid #3b5bdb;border-radius:8px;
+    box-shadow:0 0 30px #1b2a6b;padding:14px}
+  #log{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+    gap:3px;overflow:hidden}
+  .logentry{flex:0 0 auto;font-size:24px;line-height:1.25;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px #000}
+  #panel-right{justify-content:flex-end;text-align:right}
+  #help{display:none;font-size:13px;line-height:1.65;color:#9bb;text-align:left;margin-bottom:auto}
+  #help .htitle{font-size:14px;color:#8fa6c8;letter-spacing:3px;margin-bottom:8px}
+  #help .row{margin-bottom:4px}
+  #mult{margin-bottom:22px}
+  .mlabel{font-size:14px;color:#8fa6c8;letter-spacing:3px}
+  .mval{font-size:52px;font-weight:bold;color:#fff600;line-height:1.05}
+  #scorebox .lbl{font-size:14px;color:#8fa6c8;letter-spacing:3px}
+  #bigscore{font-size:50px;font-weight:bold;color:#fff600;
+    font-family:'Courier New',monospace;line-height:1.05;overflow-wrap:anywhere;word-break:break-all}
+  #msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;font-size:34px;color:#fff600;background:rgba(0,0,0,.82);
+    padding:28px 46px;border-radius:12px;border:2px solid #fff600;line-height:1.35}
+  #msg .hint{display:block;margin-top:14px;font-size:15px;color:#9bb;line-height:1.7}
+  kbd{background:#222;border:1px solid #444;border-radius:4px;padding:1px 6px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="panel-left" class="panel"><div id="log"></div></div>
+  <canvas id="c"></canvas>
+  <div id="panel-right" class="panel">
+    <div id="help">
+      <div class="htitle">CONTROLS</div>
+      <div class="row"><kbd>←</kbd> <kbd>→</kbd> flippers / return aim</div>
+      <div class="row"><kbd>↓</kbd>/<kbd>Space</kbd> hold + release to launch</div>
+      <div class="row"><kbd>↓</kbd>/<kbd>↑</kbd>/<kbd>Space</kbd> fire bottom return</div>
+      <div class="row"><kbd>M</kbd> music &nbsp; <kbd>S</kbd> soundtrack &nbsp; <kbd>P</kbd> pause</div>
+    </div>
+    <div>
+      <div id="mult"></div>
+      <div id="scorebox"><div class="lbl">SCORE</div><div id="bigscore">0</div></div>
+    </div>
+  </div>
+  <div id="msg">MINTY PINBALL
+    <span class="hint">
+      <kbd>←</kbd> <kbd>→</kbd> flippers &nbsp; <kbd>↓</kbd>/<kbd>Space</kbd> hold &amp; release to launch<br>
+      bottom return: hold <kbd>←</kbd>/<kbd>→</kbd> to aim, press <kbd>↓</kbd>/<kbd>↑</kbd>/<kbd>Space</kbd> to fire<br>
+      <kbd>M</kbd> music &nbsp; <kbd>S</kbd> soundtrack &nbsp; <kbd>P</kbd> pause<br>
+      press <kbd>Enter</kbd> to start
+    </span>
+  </div>
+</div>
+<script src="box2d.js"></script>
+<script src="geom.js"></script>
+<script src="encouragements.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
