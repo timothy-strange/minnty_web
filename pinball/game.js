@@ -60,6 +60,7 @@ var keyLeft = false, keyRight = false, keyUp = false, keyDown = false;
 var returnFlipperOpenFrames = 0;
 var debugMode = false;
 var paused = false;
+var settingsOpen = false, pausedBeforeSettings = false;
 var gateToggleQueue = [];       // deferred SetActive() for one-way gate walls
 
 //// ---- camera (matches original CGame.updateCamera) ----
@@ -1317,7 +1318,75 @@ function startGame(){
   document.getElementById("help").style.display="block";
   resetBall();
 }
+function pressLaunchControl(){
+  if(canReturnBallFromBottom()){
+    returnBallFromBottom(ball.GetPosition().x*WORLD_SCALE, returnDirectionFromKeys());
+    return;
+  }
+  if(!charging){ charging=true; charge=0; }
+}
+function releaseLaunchControl(){
+  charging=false;
+  if(onPlatform && gameStarted){ launchBall(charge); }
+  charge=0;
+}
+function setSettingsOpen(open){
+  var menu = document.getElementById("settings-menu");
+  if(!menu) return;
+  if(open === settingsOpen) return;
+  settingsOpen = open;
+  menu.classList.toggle("open", open);
+  if(open){
+    pausedBeforeSettings = paused;
+    paused = true;
+  } else {
+    paused = pausedBeforeSettings;
+  }
+}
+function bindHoldButton(id, down, up){
+  var el = document.getElementById(id);
+  if(!el) return;
+  var held = false;
+  function release(e){
+    if(e) e.preventDefault();
+    if(!held) return;
+    held = false;
+    el.classList.remove("down");
+    up();
+  }
+  el.addEventListener("pointerdown", function(e){
+    e.preventDefault();
+    if(held) return;
+    held = true;
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("down");
+    down();
+  });
+  el.addEventListener("pointerup", release);
+  el.addEventListener("pointercancel", release);
+  el.addEventListener("lostpointercapture", release);
+}
+function setupMobileControls(){
+  bindHoldButton("left-btn", function(){ if(!keyLeft && gameStarted) playSound("flipper",0.6); keyLeft=true; }, function(){ keyLeft=false; });
+  bindHoldButton("right-btn", function(){ if(!keyRight && gameStarted) playSound("flipper",0.6); keyRight=true; }, function(){ keyRight=false; });
+  bindHoldButton("launch-btn", pressLaunchControl, releaseLaunchControl);
+  var msg = document.getElementById("msg");
+  if(msg) msg.addEventListener("pointerup", function(e){ if(!gameStarted){ e.preventDefault(); startGame(); } });
+  var settingsBtn = document.getElementById("settings-btn");
+  if(settingsBtn) settingsBtn.addEventListener("pointerup", function(e){ e.preventDefault(); setSettingsOpen(!settingsOpen); });
+  var musicToggle = document.getElementById("music-toggle");
+  if(musicToggle) musicToggle.addEventListener("pointerup", function(e){ e.preventDefault(); toggleMusic(); });
+  var musicSwitch = document.getElementById("music-switch");
+  if(musicSwitch) musicSwitch.addEventListener("pointerup", function(e){ e.preventDefault(); switchMusicTrack(); });
+  document.addEventListener("pointerdown", function(e){
+    if(!settingsOpen) return;
+    var menu = document.getElementById("settings-menu"), btn = document.getElementById("settings-btn");
+    if((menu && menu.contains(e.target)) || (btn && btn.contains(e.target))) return;
+    setSettingsOpen(false);
+  });
+}
 document.addEventListener("keydown", function(e){
+  if(e.code==="Escape" && settingsOpen){ setSettingsOpen(false); e.preventDefault(); return; }
   if(e.code==="KeyD"){ toggleDebug(); e.preventDefault(); return; }
   if(debugMode){
     if(e.code==="ArrowLeft"){ keyLeft=true; e.preventDefault(); }
@@ -1329,11 +1398,8 @@ document.addEventListener("keydown", function(e){
   if(e.code==="ArrowLeft"){ if(!keyLeft && gameStarted) playSound("flipper",0.6); keyLeft=true; e.preventDefault(); }
   if(e.code==="ArrowRight"){ if(!keyRight && gameStarted) playSound("flipper",0.6); keyRight=true; e.preventDefault(); }
   if(e.code==="ArrowDown" || e.code==="ArrowUp" || e.code==="Space"){
-    if(canReturnBallFromBottom()){
-      returnBallFromBottom(ball.GetPosition().x*WORLD_SCALE, returnDirectionFromKeys());
-      e.preventDefault(); return;
-    }
-    if(e.code!=="ArrowUp" && !charging){ charging=true; charge=0; }
+    if(e.code==="ArrowUp" && canReturnBallFromBottom()) pressLaunchControl();
+    else if(e.code!=="ArrowUp") pressLaunchControl();
     e.preventDefault();
   }
   if(e.code==="Enter"){ if(!gameStarted) startGame(); }
@@ -1348,9 +1414,7 @@ document.addEventListener("keyup", function(e){
   if(e.code==="ArrowDown") keyDown=false;
   if(debugMode) return;
   if(e.code==="ArrowDown" || e.code==="Space"){
-    charging=false;
-    if(onPlatform && gameStarted){ launchBall(charge); }
-    charge=0;
+    releaseLaunchControl();
   }
 });
 window.addEventListener("resize", fitView);
@@ -1364,6 +1428,7 @@ window.onload = function(){
   setupContacts();
   setBallShapeType();
   fitView();
+  setupMobileControls();
   step();
 };
 // Box2DWeb circle shape type id
