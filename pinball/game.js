@@ -13,6 +13,7 @@ var BALL_STARTPOS = {x: 1092, y: 1770};
 var FLIPPER_STRENGTH = 18;
 var SPRING_MAX_STRENGTH = 1;
 var BALL_RETURN_Y = 1860;              // on bottom return platform, ready to fire
+var BALL_RETURN_FLIPPER_LOW_Y = 1760;  // ball top below down-flipper low point can return
 var TABLE_W = 1152, TABLE_H = 1920;
 
 //// ---- scoring tables (from CScoreController.js) ----
@@ -27,6 +28,10 @@ var MULTIPLIER_BANK_SCORE = 21;
 var SINGLE_LETTERS_LIT_SCORE = 39;
 var ALL_LETTERS_LIT_SCORE = 47;
 var BIG_SCORE_THRESHOLD = 470;
+var BIG_SCORE_RECENT_COUNT = 30;
+var BIG_SCORE_MIN_SAMPLES = 10;
+var BIG_SCORE_MULTIPLE = 4;
+var BIG_SCORE_COMBO_MS = 500;
 var BIG_SCORE_COOLDOWN_MS = 60000;
 var MULTIPLIER_STEP = 0.1;
 
@@ -83,6 +88,9 @@ var floatingTexts = [];
 var sparkles = [];
 var bigScoreFx = {t:0, max:60, parts:[], label:"BIG SCORE!!!", size:74};
 var bigScoreLastAt = -Infinity;
+var recentScoreEvents = [];
+var pendingScoreCombo = null;
+var channelTrap = null;
 var lightHitQueue = [];   // group-light contacts this step, resolved to the single closest
 // ENCOURAGEMENTS lives in encouragements.js (1000 daft words), loaded before this file.
 function updateCamera(){
@@ -485,9 +493,9 @@ function hitLight(ud){
   if(g && g.lights.every(function(x){ return x.on; })){ g.complete = true; g.onComplete(g); }
 }
 function setGroupLit(g, on){ g.lights.forEach(function(L){ L.on = on; if(on) L.flash = 1; }); }
-function addBonusLightButton(w, h, x, y, angle, light, scoreValue){
+function addBonusLightButton(w, h, x, y, angle, light, scoreValue, trap){
   light.angle = angle;
-  var b = addButton(w, h, x, y, angle, 0, {type:"bonuslight", light:light, scoreValue:scoreValue, normal:lightFaceNormal(w,h,angle)});
+  var b = addButton(w, h, x, y, angle, 0, {type:"bonuslight", light:light, scoreValue:scoreValue, normal:lightFaceNormal(w,h,angle), trap:trap});
   b.GetFixtureList().SetSensor(true);
   return b;
 }
@@ -498,6 +506,7 @@ function hitBonusLight(ud){
   addScore(ud.scoreValue * multiplier, L.x, L.y);
   encourage(L.x, L.y - 20);
   playSound("pinball_button_on");
+  if(ud.trap) startChannelTrap(ud.trap);
 }
 
 // Passing the D1 curve summit while armed lights the next PINBALL letter.
@@ -666,12 +675,46 @@ function setupContacts(){
 }
 
 //// ---- score ----
+function nowMs(){ return (typeof performance !== "undefined" ? performance.now() : Date.now()); }
+function recentScoreMean(){
+  if(!recentScoreEvents.length) return 0;
+  var total = 0;
+  for(var i=0;i<recentScoreEvents.length;i++) total += recentScoreEvents[i];
+  return total / recentScoreEvents.length;
+}
+function bigScoreThreshold(mean){ return recentScoreEvents.length >= BIG_SCORE_MIN_SAMPLES ? mean * BIG_SCORE_MULTIPLE : BIG_SCORE_THRESHOLD; }
+function recordScoreEvent(n){
+  recentScoreEvents.push(n);
+  if(recentScoreEvents.length > BIG_SCORE_RECENT_COUNT) recentScoreEvents.shift();
+}
+function maybeTriggerBigScoreForValue(n, mean){
+  if(n >= bigScoreThreshold(mean)) triggerBigScore();
+}
+function finalizeScoreCombo(force){
+  if(!pendingScoreCombo) return;
+  var now = nowMs();
+  if(!force && now - pendingScoreCombo.lastAt <= BIG_SCORE_COMBO_MS) return;
+  if(pendingScoreCombo.count > 1) maybeTriggerBigScoreForValue(pendingScoreCombo.total, recentScoreMean());
+  pendingScoreCombo = null;
+}
+function addToScoreCombo(n, at){
+  if(pendingScoreCombo && at - pendingScoreCombo.lastAt > BIG_SCORE_COMBO_MS) finalizeScoreCombo(true);
+  if(!pendingScoreCombo) pendingScoreCombo = {total:n, count:1, lastAt:at};
+  else {
+    pendingScoreCombo.total += n;
+    pendingScoreCombo.count++;
+    pendingScoreCombo.lastAt = at;
+  }
+}
 function addScore(n, x, y){
   n = Math.round(n);
+  var at = nowMs();
+  maybeTriggerBigScoreForValue(n, recentScoreMean());
+  recordScoreEvent(n);
+  addToScoreCombo(n, at);
   score += n;
   jackpot += Math.floor(n*2);
   if(x != null && y != null) addFloatText("+" + n.toLocaleString(), x, y, "#fff600", 60, 42);
-  if(n > BIG_SCORE_THRESHOLD) triggerBigScore();
 }
 function increaseMultiplier(){ multiplier = Math.round((multiplier + MULTIPLIER_STEP) * 10) / 10; }
 function multiplierText(){ return multiplier.toFixed(1); }
@@ -870,9 +913,11 @@ function buildTable(){
     wallJumpers.right.lights.push(addLight(922, 1015 + wi*60, 11, "#ffd43b"));
   }
 
-  // R1: right return channel top target, just below the B2 light bank.
-  var channelLight = addLight(900, 690, 13, "#65d46e");
-  addBonusLightButton(86, 16, 900, 690, -62, channelLight, CHANNEL_LIGHT_SCORE);
+  // R1: right return channel top target, inside the channel between the slanted limb
+  // and the right-side wall protrusion. Lighting it briefly traps and ejects the ball.
+  var channelLight = addLight(872, 580, 13, "#65d46e");
+  addBonusLightButton(86, 16, 872, 580, -62, channelLight, CHANNEL_LIGHT_SCORE,
+    {x:872, y:580, target:{x:600, y:520}, speed:56});
 
   // Bumper level-up: 3 lights right of the pop bumpers (CModuleBumper). Complete
   // them to raise the pop-bumper value; they stay lit until the next qualifying hit.
@@ -941,6 +986,36 @@ function buildTable(){
 }
 
 //// ---- launch / drain ----
+function startChannelTrap(conf){
+  channelTrap = {x:conf.x, y:conf.y, target:conf.target, speed:conf.speed || 54, t:120, max:120};
+  ball.SetLinearVelocity(new b2Vec2(0,0));
+  ball.SetAngularVelocity(0);
+}
+function updateChannelTrap(){
+  if(!channelTrap) return false;
+  if(channelTrap.t > 0){
+    var phase = channelTrap.max - channelTrap.t;
+    var shake = 5 + 3*Math.sin(phase*0.37);
+    var jx = Math.sin(phase*1.7) * shake;
+    var jy = Math.cos(phase*1.35) * shake*0.55;
+    ball.SetPosition(new b2Vec2((channelTrap.x+jx)/WORLD_SCALE, (channelTrap.y+jy)/WORLD_SCALE));
+    ball.SetLinearVelocity(new b2Vec2(0,0));
+    ball.SetAngularVelocity(0);
+    channelTrap.t--;
+    return true;
+  }
+  var p = ball.GetPosition(), px = p.x*WORLD_SCALE, py = p.y*WORLD_SCALE;
+  var dx = channelTrap.target.x - px, dy = channelTrap.target.y - py;
+  var len = Math.sqrt(dx*dx + dy*dy) || 1;
+  ball.SetPosition(new b2Vec2(channelTrap.x/WORLD_SCALE, channelTrap.y/WORLD_SCALE));
+  ball.SetLinearVelocity(new b2Vec2(dx/len*channelTrap.speed, dy/len*channelTrap.speed));
+  ball.SetAngularVelocity(0);
+  ballInGame = true; lerp = LERP_FOLLOW;
+  flash(channelTrap.x, channelTrap.y, 80, "#65d46e");
+  playSound("launch");
+  channelTrap = null;
+  return false;
+}
 function launchBall(strength){
   ball.SetActive(true);
   var x = -0.001 + Math.random()*0.002;
@@ -959,7 +1034,7 @@ function resetBall(){
 }
 function canReturnBallFromBottom(){
   if(!gameStarted || onPlatform) return false;
-  return ball.GetPosition().y*WORLD_SCALE > BALL_RETURN_Y;
+  return ball.GetPosition().y*WORLD_SCALE - BALL_RADIUS > BALL_RETURN_FLIPPER_LOW_Y;
 }
 function returnDirectionFromKeys(){
   if(keyLeft && !keyRight) return "left";
@@ -1221,8 +1296,10 @@ var b2Shape_e_circle = 0;
 var animT = 0, stuckFrames = 0;
 function step(){
   animT++;
+  finalizeScoreCombo(false);
   if(paused){ drawWorld(); requestAnimationFrame(step); return; }
   if(debugMode){ debugStep(); requestAnimationFrame(step); return; }
+  if(updateChannelTrap()){ updateCamera(); drawWorld(); requestAnimationFrame(step); return; }
   // flipper motors
   var returnOpen = returnFlipperOpenFrames > 0;
   if(returnOpen) returnFlipperOpenFrames--;
@@ -1309,6 +1386,9 @@ function startGame(){
   sparkles.length = 0;
   bigScoreFx.t = 0; bigScoreFx.parts.length = 0;
   bigScoreLastAt = -Infinity;
+  recentScoreEvents.length = 0;
+  pendingScoreCombo = null;
+  channelTrap = null;
   lightHitQueue.length = 0;
   if(logEl) logEl.innerHTML = "";
   lastScoreShown = -1; lastMultShown = -1;
