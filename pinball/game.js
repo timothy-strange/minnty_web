@@ -18,7 +18,7 @@ var TABLE_W = 1152, TABLE_H = 1920;
 
 //// ---- scoring tables (from CScoreController.js) ----
 var SINGLE_BUTTON_SCORE = 5;
-var CIRCLE_BUMPER_SCORE = [1,2,5,12,17,21,28];
+var CIRCLE_BUMPER_START_SCORE = 1;
 var GATE_SCORE = 12;
 var ROUTER_GATE_SCORE = [5,12,17,21,28,33,39];
 var JUMPER_SCORE = 3;
@@ -57,7 +57,7 @@ var b2Vec2 = Box2D.Common.Math.b2Vec2,
 
 var world, ball, leftFlipper, rightFlipper;
 var score = 0, multiplier = 1, jackpot = 0;
-var circleBumperLevel = 0, routerLevel = 0, bumperLevelButtons = 0;
+var circleBumperScore = CIRCLE_BUMPER_START_SCORE, routerLevel = 0, bumperLevelButtons = 0;
 var ballInGame = false, gameStarted = false;
 var onPlatform = true;          // ball resting on launch platform
 var charge = 0, charging = false;
@@ -82,15 +82,18 @@ var lerp = LERP_SLOW;
 var plungerY = 0, plungerVel = 0;     // offset from rest (px); + = pulled back/down
 // PINBALL letters system (CModuleLetters): arm via the 3 curve buttons, then a lane
 // pass lights the next letter; all letters lit = big bonus.
-var letterArmed = false, orionCodex = null, letterLights = [], nextLetter = 0;
+var letterArmed = false, orionCodex = null, letterLights = [], nextLetter = 0, letterBankResetTimer = 0;
 var wallJumpers = {left:null, right:null};
 var floatingTexts = [];
 var sparkles = [];
-var bigScoreFx = {t:0, max:60, parts:[], label:"BIG SCORE!!!", size:74};
+var bigScoreFx = {t:0, max:60, parts:[], label:"ABOVE AVERAGE!!", subLabel:"", subLabels:[], size:74, subSize:32, labelColor:"#fff600", outline:false, wrap:false, wordLines:false, colorCycle:false};
 var bigScoreLastAt = -Infinity;
 var recentScoreEvents = [];
 var pendingScoreCombo = null;
 var channelTrap = null;
+var channelDeflectArmed = false;
+var channelDeflectSpeed = 56;
+var channelDeflectTarget = null;
 var lightHitQueue = [];   // group-light contacts this step, resolved to the single closest
 // ENCOURAGEMENTS lives in encouragements.js (1000 daft words), loaded before this file.
 function updateCamera(){
@@ -506,7 +509,7 @@ function hitBonusLight(ud){
   addScore(ud.scoreValue * multiplier, L.x, L.y);
   encourage(L.x, L.y - 20);
   playSound("pinball_button_on");
-  if(ud.trap) startChannelTrap(ud.trap);
+  if(ud.trap) startChannelTrap(ud.trap, L);
 }
 
 // Passing the D1 curve summit while armed lights the next PINBALL letter.
@@ -524,17 +527,53 @@ function letterLanePass(){
   addScore(SINGLE_LETTERS_LIT_SCORE * multiplier, L.x, L.y);
   encourage(L.x, L.y - 20);
   playSound("letter");
-  if(nextLetter >= letterLights.length){   // all 7 lit -> big bonus + multiplier
-    addScore(ALL_LETTERS_LIT_SCORE * multiplier, L.x, L.y);
-    increaseMultiplier();
+  if(nextLetter >= letterLights.length){   // all 7 lit -> missile launch reward
+    var factor = multiplier / 2;
+    if(factor < 1) factor = multiplier;
+    var missileScore = Math.round(score * 0.05 * factor);
+    addScore(missileScore, L.x, L.y);
     playSound("all_letters_complete");
-    // PINBALL spelled out: the game's top achievement — force an extra-big confetti
-    // celebration past the normal cooldown. (Supersedes the "triggered" banner.)
-    triggerBigScore("PINBALL!", {force:true, count:320, frames:120, size:96, spread:240, maxSpd:16});
-    letterLights.forEach(function(LL){ LL.flash = 1; });
+    playSound("launch", 0.85);
+    triggerBigScore("MISSILE LAUNCHED!", {
+      force:true,
+      subLabels:["You've doomed humanity! You monster!", missileScore.toLocaleString() + " points!!"],
+      outline:true,
+      wrap:true,
+      wordLines:true,
+      colorCycle:true,
+      count:420,
+      frames:300,
+      size:96,
+      subSize:34,
+      spread:260,
+      maxSpd:18
+    });
+    letterBankResetTimer = 300;
+    letterLights.forEach(function(LL){ LL.on = true; LL.flash = 1; });
   } else {
     announceBank("ORION CODEX TRIGGERED");   // armed curve pass lit the next letter
   }
+}
+function updateLetterBankReset(){
+  if(letterBankResetTimer <= 0) return;
+  letterBankResetTimer--;
+  var lit = Math.floor(letterBankResetTimer / 15) % 2 === 0;
+  letterLights.forEach(function(L){ L.on = lit; L.flash = lit ? 1 : 0; });
+  if(letterBankResetTimer <= 0){
+    letterLights.forEach(function(L){ L.on = false; L.flash = 0; });
+    nextLetter = 0;
+  }
+}
+function triggerLetterBankCompleteDebug(){
+  if(!gameStarted) return;
+  letterBankResetTimer = 0;
+  for(var i=0; i<letterLights.length; i++){
+    letterLights[i].on = true;
+    letterLights[i].flash = 1;
+  }
+  nextLetter = Math.max(0, letterLights.length - 1);
+  letterArmed = true;
+  letterLanePass();
 }
 function addBall(){
   var fd = new b2FixtureDef;
@@ -595,7 +634,7 @@ function popBumperHit(idx, contact){
   b.SetLinearVelocity(new b2Vec2(0,0)); b.SetAngularVelocity(0);
   var imp = new b2Vec2(n.x, n.y); imp.Multiply(-b.GetMass()*14);
   b.ApplyImpulse(imp, b.GetPosition());
-  addScore(CIRCLE_BUMPER_SCORE[circleBumperLevel] * multiplier, idx.x, idx.y);
+  addScore(circleBumperScore, idx.x, idx.y);
   flash(idx.x, idx.y, 70, "#ff3df0");
   playSoundThrottled("bumper", 90);
 }
@@ -654,6 +693,22 @@ function wallJumperHit(ud, contact){
     playSound("all_lights_on_1");
   }
 }
+function channelDeflectHit(){
+  if(!channelDeflectArmed) return;
+  var v = ball.GetLinearVelocity();
+  var speed = Math.max(channelDeflectSpeed, Math.sqrt(v.x*v.x + v.y*v.y));
+  var a = (220 + Math.random()*100) * Math.PI / 180;
+  ball.SetLinearVelocity(new b2Vec2(Math.sin(a)*speed, -Math.cos(a)*speed));
+  channelDeflectArmed = false;
+  channelDeflectTarget = null;
+}
+function updateChannelDeflect(px, py){
+  if(!channelDeflectArmed || !channelDeflectTarget) return;
+  var dx = px - channelDeflectTarget.x, dy = py - channelDeflectTarget.y;
+  if(dx*dx + dy*dy <= channelDeflectTarget.r*channelDeflectTarget.r || py >= channelDeflectTarget.y){
+    channelDeflectHit();
+  }
+}
 function setupContacts(){
   var L = new Box2D.Dynamics.b2ContactListener;
   L.BeginContact = function(c){
@@ -668,6 +723,7 @@ function setupContacts(){
       if(ud.type === "light"){ lightHitQueue.push(ud); }
       if(ud.type === "bonuslight"){ hitBonusLight(ud); }
       if(ud.type === "letterlane") letterLanePass();
+      if(ud.type === "channeldeflect") channelDeflectHit();
     });
   };
   L.EndContact = function(c){};
@@ -761,7 +817,7 @@ function drawSparkles(){
   }
   ctx.restore();
 }
-// Centre-screen confetti burst + banner. Default is the "BIG SCORE!!!" payout;
+// Centre-screen confetti burst + banner. Default is the above-average payout;
 // opts can override the label/scale and force past the cooldown for landmark
 // events (e.g. completing PINBALL) so they always celebrate.
 function triggerBigScore(label, opts){
@@ -769,8 +825,16 @@ function triggerBigScore(label, opts){
   var now = (typeof performance !== "undefined" ? performance.now() : Date.now());
   if(!opts.force && now - bigScoreLastAt < BIG_SCORE_COOLDOWN_MS) return;
   bigScoreLastAt = now;
-  bigScoreFx.label = label || "BIG SCORE!!!";
+  bigScoreFx.label = label || "ABOVE AVERAGE!!";
+  bigScoreFx.subLabel = opts.subLabel || "";
+  bigScoreFx.subLabels = opts.subLabels || (bigScoreFx.subLabel ? [bigScoreFx.subLabel] : []);
   bigScoreFx.size = opts.size || 74;
+  bigScoreFx.subSize = opts.subSize || 32;
+  bigScoreFx.labelColor = opts.labelColor || "#fff600";
+  bigScoreFx.outline = !!opts.outline;
+  bigScoreFx.wrap = !!opts.wrap;
+  bigScoreFx.wordLines = !!opts.wordLines;
+  bigScoreFx.colorCycle = !!opts.colorCycle;
   bigScoreFx.max = opts.frames || 60;
   bigScoreFx.t = bigScoreFx.max;
   bigScoreFx.parts.length = 0;
@@ -804,7 +868,48 @@ function drawBigScoreFx(){
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.font = "bold " + Math.round(bigScoreFx.size*view.scale) + "px 'Trebuchet MS',Arial,sans-serif";
   ctx.shadowBlur = 0;
-  ctx.fillStyle = "#fff600"; ctx.fillText(bigScoreFx.label, 0, 0);
+  var lines = bigScoreFx.wordLines ? bigScoreFx.label.split(" ") : [bigScoreFx.label];
+  if(bigScoreFx.wrap && !bigScoreFx.wordLines){
+    lines = [];
+    var words = bigScoreFx.label.split(" "), line = "", maxWidth = canvas.width * 0.92;
+    for(var wi=0; wi<words.length; wi++){
+      var next = line ? line + " " + words[wi] : words[wi];
+      if(line && ctx.measureText(next).width > maxWidth){ lines.push(line); line = words[wi]; }
+      else line = next;
+    }
+    if(line) lines.push(line);
+  }
+  var lineHeight = Math.round(bigScoreFx.size*view.scale*0.82);
+  var startY = -lineHeight * (lines.length - 1) / 2;
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(4, Math.round(bigScoreFx.size*view.scale*0.09));
+  ctx.strokeStyle = "rgba(0,0,0,0.9)";
+  ctx.fillStyle = bigScoreFx.colorCycle ? ENCOURAGE_COLORS[Math.floor((animT / 6) % ENCOURAGE_COLORS.length)] : bigScoreFx.labelColor;
+  for(var li=0; li<lines.length; li++){
+    var y = startY + li*lineHeight;
+    if(bigScoreFx.outline) ctx.strokeText(lines[li], 0, y);
+    ctx.fillText(lines[li], 0, y);
+  }
+  if(bigScoreFx.subLabels.length){
+    ctx.font = "bold " + Math.round(bigScoreFx.subSize*view.scale) + "px 'Trebuchet MS',Arial,sans-serif";
+    var subY = startY + lines.length*lineHeight + Math.round(10*view.scale);
+    var subLineHeight = Math.round(bigScoreFx.subSize*view.scale*1.08);
+    var wrappedSubs = [];
+    for(var si=0; si<bigScoreFx.subLabels.length; si++){
+      var subWords = bigScoreFx.subLabels[si].split(" "), subLine = "";
+      for(var swi=0; swi<subWords.length; swi++){
+        var subNext = subLine ? subLine + " " + subWords[swi] : subWords[swi];
+        if(subLine && ctx.measureText(subNext).width > canvas.width * 0.9){ wrappedSubs.push(subLine); subLine = subWords[swi]; }
+        else subLine = subNext;
+      }
+      if(subLine) wrappedSubs.push(subLine);
+    }
+    for(si=0; si<wrappedSubs.length; si++){
+      var sy = subY + si*subLineHeight;
+      if(bigScoreFx.outline) ctx.strokeText(wrappedSubs[si], 0, sy);
+      ctx.fillText(wrappedSubs[si], 0, sy);
+    }
+  }
   ctx.restore();
   bigScoreFx.t--;
 }
@@ -915,14 +1020,16 @@ function buildTable(){
 
   // R1: right return channel top target, inside the channel between the slanted limb
   // and the right-side wall protrusion. Lighting it briefly traps and ejects the ball.
-  var channelLight = addLight(872, 580, 13, "#65d46e");
-  addBonusLightButton(86, 16, 872, 580, -62, channelLight, CHANNEL_LIGHT_SCORE,
-    {x:872, y:580, target:{x:600, y:520}, speed:56});
+  var channelLight = addLight(1000, 650, 13, "#65d46e");
+  addBonusLightButton(86, 16, 1000, 650, -62, channelLight, CHANNEL_LIGHT_SCORE,
+    {x:1000, y:650, target:{x:900, y:875}, speed:56, deflect:{x:800, y:1050, r:100}});
+  var channelDeflect = addButton(200, 200, 800, 1050, 0, 0, {type:"channeldeflect"});
+  channelDeflect.GetFixtureList().SetSensor(true);
 
   // Bumper level-up: 3 lights right of the pop bumpers (CModuleBumper). Complete
   // them to raise the pop-bumper value; they stay lit until the next qualifying hit.
   defGroup("bumper", function(g){
-    circleBumperLevel = Math.min(circleBumperLevel+1, CIRCLE_BUMPER_SCORE.length-1);
+    circleBumperScore += Math.random() < 0.1 ? 2 : 1;
     playSound("pinball_button_on");
     announceBank("BUMPER LEVEL UP", "B2 BANK COMPLETE");
   }, "pinball_button_on");
@@ -986,8 +1093,26 @@ function buildTable(){
 }
 
 //// ---- launch / drain ----
-function startChannelTrap(conf){
-  channelTrap = {x:conf.x, y:conf.y, target:conf.target, speed:conf.speed || 54, t:120, max:120};
+function startChannelTrap(conf, light){
+  channelTrap = {x:conf.x, y:conf.y, target:conf.target, speed:conf.speed || 54, deflect:conf.deflect, light:light, t:60, max:60};
+  var chamberScore = Math.round(score * 0.01 * multiplier);
+  addScore(chamberScore, conf.x, conf.y);
+  var chamberColors = ENCOURAGE_COLORS.filter(function(c){ return c !== "#fff27a"; });
+  triggerBigScore("XENON CHAMBER ACTIVATED!", {
+    force:true,
+    subLabel:chamberScore.toLocaleString() + " points!!",
+    labelColor:chamberColors[Math.floor(Math.random()*chamberColors.length)],
+    outline:true,
+    wrap:true,
+    size:68,
+    subSize:38,
+    frames:120,
+    count:520,
+    spread:260,
+    maxSpd:18
+  });
+  playSound("all_letters_complete");
+  playSound("all_lights_on_1", 0.75);
   ball.SetLinearVelocity(new b2Vec2(0,0));
   ball.SetAngularVelocity(0);
 }
@@ -1011,8 +1136,12 @@ function updateChannelTrap(){
   ball.SetLinearVelocity(new b2Vec2(dx/len*channelTrap.speed, dy/len*channelTrap.speed));
   ball.SetAngularVelocity(0);
   ballInGame = true; lerp = LERP_FOLLOW;
+  channelDeflectArmed = true;
+  channelDeflectSpeed = channelTrap.speed;
+  channelDeflectTarget = channelTrap.deflect || null;
   flash(channelTrap.x, channelTrap.y, 80, "#65d46e");
   playSound("launch");
+  if(channelTrap.light){ channelTrap.light.on = false; channelTrap.light.flash = 0; }
   channelTrap = null;
   return false;
 }
@@ -1320,6 +1449,7 @@ function step(){
 
   world.Step(1/FPS, 8, 8);
   world.ClearForces();
+  updateLetterBankReset();
 
   // apply queued one-way gate open/close toggles (deferred from contact callbacks)
   for(var gi=0; gi<gateToggleQueue.length; gi++) gateToggleQueue[gi].body.SetActive(gateToggleQueue[gi].active);
@@ -1328,6 +1458,7 @@ function step(){
 
   // Below-flipper exits remain in play; player fires them back with Down/Up/Space.
   var px = ball.GetPosition().x*WORLD_SCALE, py = ball.GetPosition().y*WORLD_SCALE;
+  updateChannelDeflect(px, py);
 
   // the plunger works whenever the ball is resting in the plunger lane, so a ball
   // that falls back down can always be re-launched.
@@ -1378,22 +1509,24 @@ function debugStep(){
 
 //// ---- input ----
 function startGame(){
-  score=0; multiplier=1; jackpot=0; circleBumperLevel=0; routerLevel=0; bumperLevelButtons=0;
+  score=0; multiplier=1; jackpot=0; circleBumperScore=CIRCLE_BUMPER_START_SCORE; routerLevel=0; bumperLevelButtons=0;
   gameStarted=true; ballInGame=false; paused=false;
   lights.forEach(function(L){ L.on=false; L.flash=0; });
   for(var gn in lightGroups) lightGroups[gn].complete = false;
   floatingTexts.length = 0;
   sparkles.length = 0;
-  bigScoreFx.t = 0; bigScoreFx.parts.length = 0;
+  bigScoreFx.t = 0; bigScoreFx.parts.length = 0; bigScoreFx.subLabel = ""; bigScoreFx.subLabels = []; bigScoreFx.labelColor = "#fff600"; bigScoreFx.outline = false; bigScoreFx.wrap = false; bigScoreFx.wordLines = false; bigScoreFx.colorCycle = false;
   bigScoreLastAt = -Infinity;
   recentScoreEvents.length = 0;
   pendingScoreCombo = null;
   channelTrap = null;
+  channelDeflectArmed = false;
+  channelDeflectTarget = null;
   lightHitQueue.length = 0;
   if(logEl) logEl.innerHTML = "";
   lastScoreShown = -1; lastMultShown = -1;
   resetWallJumpers();
-  letterArmed=false; nextLetter=0; setCodexArmed(false);
+  letterArmed=false; nextLetter=0; letterBankResetTimer=0; setCodexArmed(false);
   document.getElementById("msg").style.display="none";
   document.getElementById("help").style.display="block";
   resetBall();
@@ -1467,7 +1600,6 @@ function setupMobileControls(){
 }
 document.addEventListener("keydown", function(e){
   if(e.code==="Escape" && settingsOpen){ setSettingsOpen(false); e.preventDefault(); return; }
-  if(e.code==="KeyD"){ toggleDebug(); e.preventDefault(); return; }
   if(debugMode){
     if(e.code==="ArrowLeft"){ keyLeft=true; e.preventDefault(); }
     if(e.code==="ArrowRight"){ keyRight=true; e.preventDefault(); }
