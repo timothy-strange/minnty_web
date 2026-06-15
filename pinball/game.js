@@ -34,6 +34,17 @@ var BIG_SCORE_MULTIPLE = 4;
 var BIG_SCORE_COMBO_MS = 500;
 var BIG_SCORE_COOLDOWN_MS = 60000;
 var MULTIPLIER_STEP = 0.1;
+var LIGHT_BANK_COOLDOWN_MS = 400;
+var CODEX_ENHANCED_MS = 45000;
+var CODEX_VELOCITY_MULT = 2;
+var CODEX_FLIPPER_MULT = 3;
+var CODEX_SPEED_BOOST = 1.006;
+var CODEX_MAX_BALL_SPEED = 78;
+var CODEX_EXTRA_GRAVITY = 1.15;
+var CODEX_ANTIGRAVITY_MS = 10000;
+var CODEX_ANTIGRAVITY_MULT = -0.5;
+var CODEX_ANTIGRAVITY_SUPPRESS_Y = 270;
+var CODEX_ANTIGRAVITY_RESUME_Y = 668;
 
 //// ---- Box2D aliases ----
 var b2Vec2 = Box2D.Common.Math.b2Vec2,
@@ -95,6 +106,9 @@ var channelDeflectArmed = false;
 var channelDeflectSpeed = 56;
 var channelDeflectTarget = null;
 var lightHitQueue = [];   // group-light contacts this step, resolved to the single closest
+var codexEnhanced = {until:0, nextSound:0};
+var codexAntiGravity = {until:0, armed:true, suppressed:false};
+var codexBarrierBodies = [];
 // ENCOURAGEMENTS lives in encouragements.js (1000 daft words), loaded before this file.
 function updateCamera(){
   var bx = ball.GetPosition().x*WORLD_SCALE, by = ball.GetPosition().y*WORLD_SCALE;
@@ -214,6 +228,18 @@ function blip(freq, t, dur, type, vol){
   g.gain.exponentialRampToValueAtTime(vol, t+0.01);
   g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
   o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t+dur+0.02);
+}
+function codexPulseSound(t){
+  var ac = ensureAudioCtx(); if(!ac) return;
+  var o = ac.createOscillator(), o2 = ac.createOscillator(), g = ac.createGain(), f = ac.createBiquadFilter();
+  o.type = "sawtooth"; o2.type = "triangle";
+  o.frequency.setValueAtTime(74, t); o.frequency.exponentialRampToValueAtTime(98, t+0.22);
+  o2.frequency.setValueAtTime(148, t); o2.frequency.exponentialRampToValueAtTime(196, t+0.22);
+  f.type = "lowpass"; f.frequency.setValueAtTime(420, t); f.frequency.exponentialRampToValueAtTime(1100, t+0.14);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.28, t+0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.34);
+  o.connect(f); o2.connect(f); f.connect(g); g.connect(ac.destination);
+  o.start(t); o2.start(t); o.stop(t+0.38); o2.stop(t+0.38);
 }
 function noiseHit(t, dur, vol){
   var ac = ensureAudioCtx(); if(!ac) return;
@@ -363,20 +389,29 @@ function switchMusicTrack(){
 var flashTimers = [];           // visual hit flashes {x,y,r,t,col}
 
 //// ---- builders ----
-function addEdge(v1, v2, restitution){
+function addEdge(v1, v2, restitution, userData){
   var fd = new b2FixtureDef;
-  fd.density = 1; fd.friction = GENERAL_FRICTION; fd.restitution = restitution;
+  fd.density = 1; fd.friction = GENERAL_FRICTION; fd.restitution = restitution; fd.userData = userData;
   fd.shape = new b2PolygonShape;
   fd.shape.SetAsEdge(new b2Vec2(v1.x/WORLD_SCALE, v1.y/WORLD_SCALE),
                      new b2Vec2(v2.x/WORLD_SCALE, v2.y/WORLD_SCALE));
   var bd = new b2BodyDef; bd.type = b2Body.b2_staticBody;
-  world.CreateBody(bd).CreateFixture(fd);
+  return world.CreateBody(bd).CreateFixture(fd).GetBody();
 }
 // Solid wall polygon, exactly as the original CTable does (full outline, up to 14
 // vertices — this engine handles them fine once b2_polygonRadius is valid). Box2D
 // requires CCW winding (positive signed area), else the fixture gets negative mass
 // and inverted collision normals, so we enforce it.
 function addFilledPoly(pts, restitution){
+  // Drop coincident consecutive vertices (incl. an explicitly closed loop whose
+  // last point repeats the first); Box2D asserts on any zero-length polygon edge.
+  var clean = [];
+  for(var k=0;k<pts.length;k++){
+    var p = pts[k], q = clean.length ? clean[clean.length-1] : pts[pts.length-1];
+    if(p.x !== q.x || p.y !== q.y) clean.push(p);
+  }
+  if(clean.length < 3){ skipBoardEntity({type:"wall"}, "solid polygon needs >=3 distinct vertices"); return; }
+  pts = clean;
   var area = 0;
   for(var i=0;i<pts.length;i++){ var a=pts[i], b=pts[(i+1)%pts.length]; area += a.x*b.y - b.x*a.y; }
   var ring = area < 0 ? pts.slice().reverse() : pts;
@@ -435,7 +470,7 @@ function addLight(x, y, r, col, shape){
   var L = {x:x, y:y, r:r||13, on:false, flash:0, col:col||"#ffd43b", shape:shape||"circle", angle:0};
   lights.push(L); return L;
 }
-function defGroup(name, onComplete, sound){ lightGroups[name] = {lights:[], onComplete:onComplete, sound:sound||"toggle", complete:false}; }
+function defGroup(name, onComplete, sound){ lightGroups[name] = {lights:[], onComplete:onComplete, sound:sound||"toggle", complete:false, cooldownUntil:0}; }
 // A light hooked to a physics sensor: lights on contact, checks its group.
 // Args mirror addButton: (w, h, x, y, angle, group, light).
 // Unit normal of a light button's face: perpendicular to its long dimension, so
@@ -470,6 +505,8 @@ function resolveLightHits(){
   var seen = [];
   lightHitQueue.forEach(function(ud){
     var L = ud.light, g = ud.group && lightGroups[ud.group];
+    if(ud.group === "curve" && codexEnhancedActive()) return;
+    if(g && nowMs() < g.cooldownUntil) return;
     if(L.on && !(g && g.complete)) return;           // already on (and group not full): nothing to do
     if(seen.indexOf(L) >= 0) return;
     seen.push(L);
@@ -490,6 +527,7 @@ function hitLight(ud){
   }
   if(L.on) return;
   L.on = true; L.flash = 1;
+  if(g) g.cooldownUntil = nowMs() + LIGHT_BANK_COOLDOWN_MS;
   addScore(SINGLE_BUTTON_SCORE * multiplier, L.x, L.y);
   encourage(L.x, L.y - 20);
   playReward();
@@ -516,6 +554,44 @@ function hitBonusLight(ud){
 function setCodexArmed(on){
   if(orionCodex){ orionCodex.on = on; orionCodex.flash = on ? 1 : 0; }
 }
+function codexEnhancedActive(){ return nowMs() < codexEnhanced.until; }
+function codexVelocityMult(){ return codexEnhancedActive() ? CODEX_VELOCITY_MULT : 1; }
+function codexFlipperMult(){ return codexEnhancedActive() ? CODEX_FLIPPER_MULT : 1; }
+function startCodexEnhancedMode(x, y){
+  var now = nowMs();
+  if(now < codexEnhanced.until) return;
+  codexEnhanced.until = now + CODEX_ENHANCED_MS;
+  codexEnhanced.nextSound = 0;
+  flash(x, y, 120, "#9b6bff");
+  addFloatText("CODEX OVERDRIVE", x, y - 70, "#d780ff", 110, 38, true);
+}
+function codexAntiGravityActive(){ return codexEnhancedActive() && nowMs() < codexAntiGravity.until; }
+function triggerCodexAntiGravity(x, y){
+  if(!codexEnhancedActive() || !codexAntiGravity.armed || codexAntiGravityActive()) return;
+  codexAntiGravity.until = nowMs() + CODEX_ANTIGRAVITY_MS;
+  codexAntiGravity.armed = false;
+  codexAntiGravity.suppressed = false;
+  flash(x, y, 150, "#65d46e");
+  logEvent("ANTI-GRAVITY", "#65d46e");
+}
+function armCodexAntiGravity(){
+  if(!codexAntiGravityActive()) codexAntiGravity.armed = true;
+}
+function addCodexAntiGravityBarrier(){
+  var pts = [{x:225,y:950}, {x:300,y:1000}, {x:430,y:930}, {x:585,y:850}];
+  codexBarrierBodies.length = 0;
+  for(var i=0; i<pts.length-1; i++){
+    var b = addEdge(pts[i], pts[i+1], 0.2, {type:"codexbarrier"});
+    b.SetActive(false);
+    codexBarrierBodies.push(b);
+  }
+}
+function updateCodexAntiGravityBarrier(){
+  var active = codexAntiGravityActive();
+  for(var i=0; i<codexBarrierBodies.length; i++){
+    if(codexBarrierBodies[i].IsActive() !== active) codexBarrierBodies[i].SetActive(active);
+  }
+}
 function letterLanePass(){
   if(!letterArmed || nextLetter >= letterLights.length) return;
   addScore(ROUTER_GATE_SCORE[routerLevel] * multiplier, 224, 210);
@@ -527,6 +603,7 @@ function letterLanePass(){
   addScore(SINGLE_LETTERS_LIT_SCORE * multiplier, L.x, L.y);
   encourage(L.x, L.y - 20);
   playSound("letter");
+  startCodexEnhancedMode(L.x, L.y);
   if(nextLetter >= letterLights.length){   // all 7 lit -> missile launch reward
     var factor = multiplier / 2;
     if(factor < 1) factor = multiplier;
@@ -552,6 +629,25 @@ function letterLanePass(){
     letterLights.forEach(function(LL){ LL.on = true; LL.flash = 1; });
   } else {
     announceBank("ORION CODEX TRIGGERED");   // armed curve pass lit the next letter
+  }
+}
+function updateCodexEnhanced(){
+  if(!codexEnhancedActive()) return;
+  var v = ball.GetLinearVelocity(), speed = Math.sqrt(v.x*v.x + v.y*v.y);
+  if(speed > 0.01 && speed < CODEX_MAX_BALL_SPEED) ball.SetLinearVelocity(new b2Vec2(v.x*CODEX_SPEED_BOOST, v.y*CODEX_SPEED_BOOST));
+  if(codexAntiGravityActive()){
+    var py = ball.GetPosition().y * WORLD_SCALE;
+    if(py < CODEX_ANTIGRAVITY_SUPPRESS_Y) codexAntiGravity.suppressed = true;
+    else if(py >= CODEX_ANTIGRAVITY_RESUME_Y) codexAntiGravity.suppressed = false;
+    var targetGravity = codexAntiGravity.suppressed ? 1 : CODEX_ANTIGRAVITY_MULT;
+    ball.ApplyForce(new b2Vec2(0, ball.GetMass()*GRAVITY*(targetGravity - 1)), ball.GetWorldCenter());
+  } else {
+    ball.ApplyForce(new b2Vec2(0, ball.GetMass()*GRAVITY*CODEX_EXTRA_GRAVITY), ball.GetWorldCenter());
+  }
+  var ac = ensureAudioCtx();
+  if(ac && ac.currentTime >= codexEnhanced.nextSound){
+    codexPulseSound(ac.currentTime);
+    codexEnhanced.nextSound = ac.currentTime + 0.42;
   }
 }
 function updateLetterBankReset(){
@@ -589,6 +685,7 @@ function addFlipper(pts, x, y, isLeft){
   // body
   var fd = new b2FixtureDef;
   fd.density = 1; fd.friction = 0; fd.restitution = GENERAL_RESTITUTION;
+  fd.userData = {type:"flipper"};
   fd.shape = new b2PolygonShape;
   var raw = pts.map(function(p){ return {x:(p.x*(isLeft?-1:1)), y:p.y}; });
   // Box2D requires CCW winding (positive signed area). The left flipper mirrors the
@@ -629,10 +726,12 @@ function ballBodyFrom(contact){
 }
 function popBumperHit(idx, contact){
   var b = ballBodyFrom(contact); if(!b) return;
+  triggerCodexAntiGravity(idx.x, idx.y);
   var wm = new b2WorldManifold(); contact.GetWorldManifold(wm);
   var n = wm.m_normal;
   b.SetLinearVelocity(new b2Vec2(0,0)); b.SetAngularVelocity(0);
   var imp = new b2Vec2(n.x, n.y); imp.Multiply(-b.GetMass()*14);
+  imp.Multiply(codexVelocityMult());
   b.ApplyImpulse(imp, b.GetPosition());
   addScore(circleBumperScore, idx.x, idx.y);
   flash(idx.x, idx.y, 70, "#ff3df0");
@@ -643,6 +742,7 @@ function slingHit(dir, contact){           // dir: -1 left, +1 right
   var n = new b2Vec2(0.4*dir, 0.5);
   b.SetLinearVelocity(new b2Vec2(0,0)); b.SetAngularVelocity(0);
   n.Multiply(-b.GetMass()*20);
+  n.Multiply(codexVelocityMult());
   b.ApplyImpulse(n, b.GetPosition());
   addScore(SINGLE_BUTTON_SCORE * multiplier, 540 + dir*284, 1460);
   playSound("bumper");
@@ -653,7 +753,8 @@ function wallJumperHit(ud, contact){
   var dir = ud.side === "left" ? 1 : -1;
   var v = b.GetLinearVelocity();
   var speed = Math.sqrt(v.x*v.x + v.y*v.y);
-  b.SetLinearVelocity(new b2Vec2(dir * Math.max(4.25, Math.min(5.75, speed*0.475)), v.y));
+  var boost = codexVelocityMult();
+  b.SetLinearVelocity(new b2Vec2(dir * Math.max(4.25, Math.min(5.75, speed*0.475)) * boost, v.y * boost));
   b.SetAngularVelocity(0);
 
   var state = wallJumpers[ud.side];
@@ -670,6 +771,7 @@ function wallJumperHit(ud, contact){
 
   // light the wall light the ball is closest to (a direct hit); if two are
   // (near-)equidistant, pick a random one of them.
+  if(nowMs() < (state.cooldownUntil || 0)) return;
   var bp = b.GetPosition(), bx = bp.x*WORLD_SCALE, by = bp.y*WORLD_SCALE;
   var cands = [];
   state.lights.forEach(function(L){
@@ -680,6 +782,7 @@ function wallJumperHit(ud, contact){
   if(pick){
     var best = pick.L;
     best.on = true; best.flash = 1;
+    state.cooldownUntil = nowMs() + LIGHT_BANK_COOLDOWN_MS;
     addScore(JUMPER_SCORE * multiplier, ud.x, ud.y);
     flash(ud.x, ud.y, 55, "#ffd43b");
     encourage(best.x, best.y - 20); playReward();
@@ -696,7 +799,7 @@ function wallJumperHit(ud, contact){
 function channelDeflectHit(){
   if(!channelDeflectArmed) return;
   var v = ball.GetLinearVelocity();
-  var speed = Math.max(channelDeflectSpeed, Math.sqrt(v.x*v.x + v.y*v.y));
+  var speed = Math.max(channelDeflectSpeed, Math.sqrt(v.x*v.x + v.y*v.y)) * codexVelocityMult();
   var a = (220 + Math.random()*100) * Math.PI / 180;
   ball.SetLinearVelocity(new b2Vec2(Math.sin(a)*speed, -Math.cos(a)*speed));
   channelDeflectArmed = false;
@@ -715,6 +818,7 @@ function setupContacts(){
     [c.GetFixtureA().GetUserData(), c.GetFixtureB().GetUserData()].forEach(function(ud){
       if(!ud) return;
       if(ud.type === "pop")  popBumperHit(ud, c);
+      if(ud.type === "flipper" && ballBodyFrom(c)) armCodexAntiGravity();
       if(ud.type === "sling") slingHit(ud.dir, c);
       if(ud.type === "walljumper") wallJumperHit(ud, c);
       if(ud.type === "opener"){ queueGate(ud.gate.wall, false); if(ud.gate.onPass) ud.gate.onPass(); playSound("gate"); }
@@ -725,6 +829,12 @@ function setupContacts(){
       if(ud.type === "letterlane") letterLanePass();
       if(ud.type === "channeldeflect") channelDeflectHit();
     });
+  };
+  L.PreSolve = function(c){
+    var a = c.GetFixtureA().GetUserData(), b = c.GetFixtureB().GetUserData();
+    if(!((a && a.type === "codexbarrier") || (b && b.type === "codexbarrier"))) return;
+    var bb = ballBodyFrom(c); if(!bb) return;
+    if(bb.GetLinearVelocity().y > 0) c.SetEnabled(false);
   };
   L.EndContact = function(c){};
   world.SetContactListener(L);
@@ -951,6 +1061,7 @@ function isBottomDrainLip(a, b){
   return a.y > 1840 && b.y > 1840 && Math.abs(a.x-b.x) < 6 && x > 300 && x < 730;
 }
 function buildTable(){
+  resetTableState();   // clear shared lights/groups/role state so rebuilds don't duplicate
   LEVEL.layers.forEach(function(layer){
     var name = layer.name;
     layer.objects.forEach(function(o){
@@ -1009,8 +1120,8 @@ function buildTable(){
 
   // --- Light groups (CLightIndicator). Positions from the original modules. ---
 
-  wallJumpers.left = {complete:false, lights:[]};
-  wallJumpers.right = {complete:false, lights:[]};
+  wallJumpers.left = {complete:false, lights:[], cooldownUntil:0};
+  wallJumpers.right = {complete:false, lights:[], cooldownUntil:0};
   // embed the lights in the side-wall surfaces (left wall ~x30, right central-side
   // wall ~x931) rather than floating off them
   for(var wi=0; wi<4; wi++){
@@ -1090,6 +1201,203 @@ function buildTable(){
   addEdge({x:340.7, y:1856}, {x:461, y:1912}, 0);
   addEdge({x:700, y:1851.3}, {x:568, y:1912}, 0);
   addButton(900, 14, TABLE_W/2, 1912, 0, 0.05, null);
+  addCodexAntiGravityBarrier();
+}
+
+//// ---- data-driven board loader (editor output) ----
+// buildTableFromBoard() reconstructs a table from an editor/board.json (see editor/PROPOSAL.md).
+// It reuses every existing builder, so there is no new physics code. The stock hardcoded
+// buildTable() above remains the default/fallback when no board is supplied.
+
+// The stock right-flipper outline, copied (frozen) from LEVEL so a board referencing only
+// stock flippers stays portable and the loader never reads geom.js at load (PROPOSAL §4.3).
+var FLIPPER_OUTLINE = [
+  {x:0,y:0},{x:-144,y:55.33},{x:-150.67,y:53.33},{x:-154.5,y:49.58},{x:-156.67,y:46},
+  {x:-158.67,y:41.33},{x:-159.25,y:35.5},{x:-158.08,y:30.67},{x:-153.5,y:26.42},
+  {x:-20.58,y:-44.58},{x:-13.83,y:-46.17},{x:-8,y:-45.33},{x:-2,y:-42.67},{x:2,y:-39.33},
+  {x:5.33,y:-32.67},{x:8.83,y:-24.58},{x:9.33,y:-14.67},{x:6.67,y:-6.67}
+];
+
+// Group-completion rewards, keyed by id (PROPOSAL §4.1). The board picks an id; the closures
+// live here. These are the exact onComplete bodies from the stock buildTable() defGroup calls.
+var REWARDS = { groupComplete: {
+  multiplierUp: function(g){
+    increaseMultiplier();
+    addScore(MULTIPLIER_BANK_SCORE*multiplier, 600, 300); playSound("pinball_button_on");
+    announceBank("MULTIPLIER", "A1 BANK COMPLETE");
+  },
+  bumperLevelUp: function(g){
+    circleBumperScore += Math.random() < 0.1 ? 2 : 1;
+    playSound("pinball_button_on");
+    announceBank("BUMPER LEVEL UP", "B2 BANK COMPLETE");
+  },
+  armCodex: function(g){
+    letterArmed = true; setCodexArmed(true);
+    announceBank("ORION CODEX ARMED", "D1 BANK COMPLETE");
+    playSound("gate");
+  }
+}};
+
+function countFixtures(w){
+  var n = 0;
+  for(var b = w.GetBodyList(); b; b = b.GetNext())
+    for(var f = b.GetFixtureList(); f; f = f.GetNext()) n++;
+  return n;
+}
+
+// Clear the shared render/state collections the builders populate. MUST run before any
+// (re)build, including the legacy buildTable(), or switching boards leaves stale lights,
+// groups, and role slots behind (they live outside the Box2D world, which is itself fresh).
+function resetTableState(){
+  lights.length = 0;
+  for(var k in lightGroups) delete lightGroups[k];
+  wallJumpers.left  = {complete:false, lights:[], cooldownUntil:0};   // ready for the loader's first pass
+  wallJumpers.right = {complete:false, lights:[], cooldownUntil:0};
+  letterLights.length = 0; orionCodex = null; nextLetter = 0; letterArmed = false;
+}
+
+// Loader helpers. fin() guards the ballStart read in initGame; entAngle() defaults an absent
+// (but schema-valid) angle to 0; samePt() drops zero-length edge segments before Box2D sees them.
+function fin(v){ return typeof v === "number" && isFinite(v); }
+function entAngle(e){ return fin(e.angle) ? e.angle : 0; }
+function samePt(a, b){ return a[0] === b[0] && a[1] === b[1]; }
+function boardLimits(){ return ((typeof BoardSchema !== "undefined" && BoardSchema.LIMITS) || {maxJsonBytes:2*1024*1024, maxGroups:200, maxEntities:2000}); }
+function skipBoardEntity(e, why){
+  if(typeof console !== "undefined" && console.warn) console.warn("Skipping board entity" + (e && e.type ? " " + e.type : "") + ": " + why, e);
+}
+function safeBoardUrl(raw){
+  try {
+    var u = new URL(decodeURIComponent(raw), location.href);
+    if(u.origin !== location.origin) return null;
+    if(u.protocol !== "http:" && u.protocol !== "https:" && u.protocol !== "file:") return null;
+    return u.href;
+  } catch(e){ return null; }
+}
+function parseBoardJson(txt){
+  if(txt.length > boardLimits().maxJsonBytes) throw new Error("board JSON is too large");
+  return JSON.parse(txt);
+}
+function fetchBoardJson(raw){
+  var url = safeBoardUrl(raw);
+  if(!url) return Promise.reject(new Error("board URL must be same-origin"));
+  return fetch(url).then(function(r){
+    var len = Number(r.headers.get("content-length"));
+    if(len && len > boardLimits().maxJsonBytes) throw new Error("board JSON is too large");
+    return r.text();
+  }).then(parseBoardJson);
+}
+// buildTableFromBoard reconstructs a table from an editor/board.json. A board can reach here
+// having bypassed editor validation (forced export, hand-edited, hostile JSON), so the loader
+// must never throw or build NaN geometry. Rather than re-deriving per-field guards (which drift
+// from the editor's rules — see editor/CARLISLE-BUGS.md), it uses the SAME shared validator the
+// editor does: BoardSchema.entityErrors(). Any entity that wouldn't pass validation is skipped.
+function buildTableFromBoard(board){
+  resetTableState();
+  var ents = board && Array.isArray(board.entities) ? board.entities : [];
+  var schema = (typeof window !== "undefined" && window.BoardSchema) || (typeof BoardSchema !== "undefined" && BoardSchema);
+  if(!schema){ skipBoardEntity(null, "BoardSchema not loaded; cannot validate board — building empty table"); return; }
+  if(!board || typeof board !== "object" || !board.table || !fin(board.table.w) || !fin(board.table.h)){ skipBoardEntity(null, "board is missing table dimensions"); return; }
+  var lim = boardLimits(), groups = board && Array.isArray(board.groups) ? board.groups : [];
+  if(groups.length > lim.maxGroups || ents.length > lim.maxEntities){ skipBoardEntity(null, "board exceeds size limits"); return; }
+  var ctx = schema.collectContext(board);
+  function ok(e){
+    var errs = schema.entityErrors(e, board, ctx);
+    if(errs.length) skipBoardEntity(e, errs[0]);
+    return errs.length === 0;
+  }
+
+  // first pass: create all valid lights, index by id, fill ordered/role slots.
+  var byId = Object.create(null);
+  ents.forEach(function(e){
+    if(!e || typeof e !== "object" || e.type !== "light" || !ok(e)) return;
+    var L = addLight(e.x, e.y, e.r, e.color, e.shape);
+    if(e.id) byId[e.id] = L;
+    if(e.role === "letter") letterLights.push(L);
+    else if(e.role === "codex"){ orionCodex = L; orionCodex.pulse = true; }
+    else if(e.role === "wallJumper" && wallJumpers[e.side]) wallJumpers[e.side].lights.push(L);
+  });
+
+  // groups (before lightButtons, which register themselves into a group). Names are validated by
+  // entityErrors' references; here we only need them to be safe object-map keys.
+  (board && Array.isArray(board.groups) ? board.groups : []).forEach(function(g){
+    if(!g || typeof g !== "object" || typeof g.name !== "string" || g.name === "__proto__" || g.name === "constructor" || g.name === "prototype") return;
+    defGroup(g.name, REWARDS.groupComplete[g.onComplete] || function(){}, g.sound);
+  });
+
+  // index valid channelDeflect entities so a bonusLight trap can resolve its deflectRef.
+  var deflectById = Object.create(null);
+  ents.forEach(function(e){ if(e && typeof e === "object" && e.type === "channelDeflect" && ok(e) && e.id) deflectById[e.id] = e; });
+
+  // second pass: build everything else. ok() has already vetted geometry/refs, so the builders
+  // below receive only finite, in-bounds, well-formed values.
+  ents.forEach(function(e){
+    if(!e || typeof e !== "object" || !ok(e)) return;
+    switch(e.type){
+      case "light": break;   // already created
+      case "wall":
+        var pts = e.points.map(function(p){ return {x:p[0], y:p[1]}; });
+        if(e.solid) addFilledPoly(pts, e.restitution || 0);
+        else for(var i=0;i<pts.length-1;i++) if(!samePt(e.points[i], e.points[i+1])) addEdge(pts[i], pts[i+1], 0);
+        break;
+      case "returnEdge":
+        for(var i=0;i<e.points.length-1;i++) if(!samePt(e.points[i], e.points[i+1])) addEdge({x:e.points[i][0],y:e.points[i][1]}, {x:e.points[i+1][0],y:e.points[i+1][1]}, 0);
+        break;
+      case "returnPlatform":
+        addButton(e.w, e.h, e.x, e.y, entAngle(e), e.restitution||0, null);
+        break;
+      case "popBumper":
+        addStaticCircle(e.r, e.x, e.y, 0, {type:"pop", x:e.x, y:e.y});
+        break;
+      case "post":
+        addStaticCircle(e.r, e.x, e.y, 0);
+        break;
+      case "slingshot":
+        addButton(e.w, e.h, e.x, e.y, entAngle(e), 0, {type:"sling", dir:e.dir}).GetFixtureList().SetSensor(true);
+        break;
+      case "wallJumper":
+        addButton(e.w, e.h, e.x, e.y, entAngle(e), 0, {type:"walljumper", side:e.side, x:e.x, y:e.y}).GetFixtureList().SetSensor(true);
+        break;
+      case "checkpoint":
+        addButton(e.w, e.h, e.x, e.y, entAngle(e), 0, {type:"checkpoint", x:e.x, y:e.y}).GetFixtureList().SetSensor(true);
+        break;
+      case "letterLane":
+        addButton(e.w, e.h, e.x, e.y, entAngle(e), 0, {type:"letterlane"}).GetFixtureList().SetSensor(true);
+        break;
+      case "channelDeflect":
+        addButton(e.w, e.h, e.x, e.y, entAngle(e), 0, {type:"channeldeflect"}).GetFixtureList().SetSensor(true);
+        break;
+      case "lightButton":
+        // entityErrors guarantees e.light resolves to a declared id, but that light may itself have
+        // been skipped for bad geometry, so byId can still miss — guard the deref either way.
+        if(!byId[e.light]){ skipBoardEntity(e, "linked light was skipped"); break; }
+        addLightButton(e.w, e.h, e.x, e.y, entAngle(e), e.group, byId[e.light]);
+        break;
+      case "bonusLight":
+        if(!byId[e.light]){ skipBoardEntity(e, "linked light was skipped"); break; }
+        var trap = null;
+        if(e.trap){
+          // A valid deflectRef may still point at a channelDeflect that was skipped for bad
+          // geometry; then the trap loads without its deflect zone (the original's soft-degrade).
+          var d = e.trap.deflectRef && deflectById[e.trap.deflectRef];
+          trap = {x:e.x, y:e.y, target:e.trap.target, speed:e.trap.speed,
+                  deflect: d ? {x:d.x, y:d.y, r:Math.max(d.w, d.h)/2} : null};
+        }
+        addBonusLightButton(e.w, e.h, e.x, e.y, entAngle(e), byId[e.light], e.score, trap);
+        break;
+      case "oneWayGate":
+        var onPass = e.entersPlay ? (function(gx, gy){ return function(){
+          if(!ballInGame){ ballInGame = true; addScore(GATE_SCORE*multiplier, gx, gy); }
+        }; })(e.x, e.y) : null;
+        addOneWayGate(e.x, e.y, e.w, e.h, entAngle(e), e.openers, e.closers, onPass);
+        break;
+      case "flipper":
+        var outline = e.outline ? e.outline.map(function(p){ return {x:p[0], y:p[1]}; }) : FLIPPER_OUTLINE;
+        var joint = addFlipper(outline, e.x, e.y, e.side === "left");
+        if(e.side === "left") leftFlipper = joint; else rightFlipper = joint;
+        break;
+    }
+  });
+  addCodexAntiGravityBarrier();
 }
 
 //// ---- launch / drain ----
@@ -1132,8 +1440,9 @@ function updateChannelTrap(){
   var p = ball.GetPosition(), px = p.x*WORLD_SCALE, py = p.y*WORLD_SCALE;
   var dx = channelTrap.target.x - px, dy = channelTrap.target.y - py;
   var len = Math.sqrt(dx*dx + dy*dy) || 1;
+  var boost = codexVelocityMult();
   ball.SetPosition(new b2Vec2(channelTrap.x/WORLD_SCALE, channelTrap.y/WORLD_SCALE));
-  ball.SetLinearVelocity(new b2Vec2(dx/len*channelTrap.speed, dy/len*channelTrap.speed));
+  ball.SetLinearVelocity(new b2Vec2(dx/len*channelTrap.speed*boost, dy/len*channelTrap.speed*boost));
   ball.SetAngularVelocity(0);
   ballInGame = true; lerp = LERP_FOLLOW;
   channelDeflectArmed = true;
@@ -1148,7 +1457,7 @@ function updateChannelTrap(){
 function launchBall(strength){
   ball.SetActive(true);
   var x = -0.001 + Math.random()*0.002;
-  ball.ApplyImpulse(new b2Vec2(x, -strength), ball.GetPosition());
+  ball.ApplyImpulse(new b2Vec2(x, -strength * codexVelocityMult()), ball.GetPosition());
   lerp = LERP_FOLLOW;                 // camera follows the ball closely once in play
   plungerVel = -(plungerY*7 + 36);    // snap the launcher head up (fire)
   playSound("launch");
@@ -1186,7 +1495,8 @@ function returnBallFromBottom(px, dir){
   var len = Math.sqrt(dx*dx + dy*dy) || 1;
   var vx = dx/len*speed + (Math.random()-0.5)*2;
   var vy = dy/len*speed - Math.random()*2;
-  ball.SetLinearVelocity(new b2Vec2(vx, vy));
+  var boost = codexVelocityMult();
+  ball.SetLinearVelocity(new b2Vec2(vx*boost, vy*boost));
   returnFlipperOpenFrames = 30;
   ballInGame = true; lerp = LERP_FOLLOW;
   playSound("launch");
@@ -1274,6 +1584,7 @@ function drawWorld(){
     for(var f = b.GetFixtureList(); f; f = f.GetNext()){
       if(f.IsSensor()) continue;
       var ud = f.GetUserData();
+      if(ud && ud.type === "codexbarrier") continue;
       drawFixture(b, f, ud && ud.type==="pop" ? "#ff3df0" : null);
     }
   }
@@ -1282,16 +1593,26 @@ function drawWorld(){
   // plunger (animated launcher in the plunger lane)
   drawPlunger();
   // flippers
-  ctx.fillStyle = "#ffd43b"; ctx.strokeStyle = "#f08c00";
+  var codexOn = codexEnhancedActive();
+  ctx.fillStyle = codexOn ? "#9b6bff" : "#ffd43b"; ctx.strokeStyle = codexOn ? "#d780ff" : "#f08c00";
+  if(codexOn){ ctx.shadowColor = "#d780ff"; ctx.shadowBlur = 12 + 10*Math.sin(animT*0.22); }
   [leftFlipper, rightFlipper].forEach(function(j){
-    if(j) drawFixture(j.GetBodyA(), j.GetBodyA().GetFixtureList(), "#ffd43b");
+    if(j) drawFixture(j.GetBodyA(), j.GetBodyA().GetFixtureList(), codexOn ? "#9b6bff" : "#ffd43b");
   });
+  ctx.shadowBlur = 0;
   // ball
   var p = ball.GetPosition();
   ctx.beginPath();
   ctx.arc(p.x*WORLD_SCALE, p.y*WORLD_SCALE, BALL_RADIUS, 0, 7);
   var grd = ctx.createRadialGradient(p.x*WORLD_SCALE-8, p.y*WORLD_SCALE-8, 4, p.x*WORLD_SCALE, p.y*WORLD_SCALE, BALL_RADIUS);
-  grd.addColorStop(0,"#fff"); grd.addColorStop(1,"#888");
+  if(codexOn){
+    var ballPulse = 0.5 + 0.5*Math.sin(animT*0.08);
+    grd.addColorStop(0,"#fff");
+    grd.addColorStop(0.45, ballPulse > 0.5 ? "#d780ff" : "#f0c8ff");
+    grd.addColorStop(1,"#6f42c1");
+  } else {
+    grd.addColorStop(0,"#fff"); grd.addColorStop(1,"#888");
+  }
   ctx.fillStyle = grd; ctx.fill();
 
   // flashes
@@ -1305,6 +1626,7 @@ function drawWorld(){
   drawFloatingTexts();
   ctx.restore();
   drawBigScoreFx();
+  drawCodexAntiGravityBanner();
   drawHUD();
   updatePanels();
 }
@@ -1376,6 +1698,23 @@ function drawPlunger(){
   ctx.fillStyle = "#b8860b";                       // shaft below the head
   ctx.fillRect(px-6, y+24, 12, 120 - plungerY);
 }
+function drawCodexAntiGravityBanner(){
+  if(!codexAntiGravityActive()) return;
+  ctx.save();
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  var a = 0.55 + 0.45*Math.sin(animT*0.28);
+  var x = canvas.width/2, y = canvas.height*2/3;
+  ctx.globalAlpha = 0.65 + 0.35*a;
+  ctx.font = "bold " + Math.round(Math.max(24, canvas.height*0.052)) + "px 'Trebuchet MS',Arial,sans-serif";
+  ctx.lineWidth = Math.max(4, Math.round(canvas.height*0.006));
+  ctx.strokeStyle = "rgba(0,0,0,0.86)";
+  ctx.shadowColor = "#65d46e"; ctx.shadowBlur = 14 + 18*a;
+  ctx.fillStyle = a > 0.55 ? "#c8ffd6" : "#65d46e";
+  ctx.strokeText("ANTI-GRAVITY", x, y);
+  ctx.fillText("ANTI-GRAVITY", x, y);
+  ctx.restore();
+}
 function drawHUD(){
   // small score panel overlaid top-left, with a background for legibility
   var pad = 8, w = Math.min(150, canvas.width*0.34), h = 46;
@@ -1432,8 +1771,11 @@ function step(){
   // flipper motors
   var returnOpen = returnFlipperOpenFrames > 0;
   if(returnOpen) returnFlipperOpenFrames--;
-  if(leftFlipper)  leftFlipper.SetMotorSpeed((keyLeft || returnOpen) ? FLIPPER_STRENGTH : -FLIPPER_STRENGTH);
-  if(rightFlipper) rightFlipper.SetMotorSpeed((keyRight || returnOpen) ? -FLIPPER_STRENGTH : FLIPPER_STRENGTH);
+  var flipperStrength = FLIPPER_STRENGTH * codexFlipperMult();
+  if(leftFlipper)  leftFlipper.SetMotorSpeed((keyLeft || returnOpen) ? flipperStrength : -flipperStrength);
+  if(rightFlipper) rightFlipper.SetMotorSpeed((keyRight || returnOpen) ? -flipperStrength : flipperStrength);
+  updateCodexEnhanced();
+  updateCodexAntiGravityBarrier();
 
   // plunger charge + visual animation
   if(charging && onPlatform){ charge = Math.min(charge + 1/60/1.0, SPRING_MAX_STRENGTH); }
@@ -1462,7 +1804,7 @@ function step(){
 
   // the plunger works whenever the ball is resting in the plunger lane, so a ball
   // that falls back down can always be re-launched.
-  onPlatform = gameStarted && px > 1040 && py > 1740;
+  onPlatform = gameStarted && px > BALL_STARTPOS.x - 52 && py > BALL_STARTPOS.y - 30;
 
   // anti-stuck: if the ball sits nearly still in play (e.g. wedged against a gate),
   // nudge it free after ~1.3s.
@@ -1501,6 +1843,8 @@ function debugStep(){
   for(var gi=0; gi<gateToggleQueue.length; gi++) gateToggleQueue[gi].body.SetActive(gateToggleQueue[gi].active);
   gateToggleQueue.length = 0;
   resolveLightHits();
+  updateCodexEnhanced();
+  updateCodexAntiGravityBarrier();
   // camera follows the ball directly (unbounded) so it stays centred on screen
   cam.x = ball.GetPosition().x*WORLD_SCALE - VIEW_W/2;
   cam.y = ball.GetPosition().y*WORLD_SCALE - VIEW_H/2;
@@ -1512,7 +1856,7 @@ function startGame(){
   score=0; multiplier=1; jackpot=0; circleBumperScore=CIRCLE_BUMPER_START_SCORE; routerLevel=0; bumperLevelButtons=0;
   gameStarted=true; ballInGame=false; paused=false;
   lights.forEach(function(L){ L.on=false; L.flash=0; });
-  for(var gn in lightGroups) lightGroups[gn].complete = false;
+  for(var gn in lightGroups){ lightGroups[gn].complete = false; lightGroups[gn].cooldownUntil = 0; }
   floatingTexts.length = 0;
   sparkles.length = 0;
   bigScoreFx.t = 0; bigScoreFx.parts.length = 0; bigScoreFx.subLabel = ""; bigScoreFx.subLabels = []; bigScoreFx.labelColor = "#fff600"; bigScoreFx.outline = false; bigScoreFx.wrap = false; bigScoreFx.wordLines = false; bigScoreFx.colorCycle = false;
@@ -1523,6 +1867,12 @@ function startGame(){
   channelDeflectArmed = false;
   channelDeflectTarget = null;
   lightHitQueue.length = 0;
+  codexEnhanced.until = 0;
+  codexEnhanced.nextSound = 0;
+  codexAntiGravity.until = 0;
+  codexAntiGravity.armed = true;
+  codexAntiGravity.suppressed = false;
+  updateCodexAntiGravityBarrier();
   if(logEl) logEl.innerHTML = "";
   lastScoreShown = -1; lastMultShown = -1;
   resetWallJumpers();
@@ -1542,6 +1892,22 @@ function releaseLaunchControl(){
   charging=false;
   if(onPlatform && gameStarted){ launchBall(charge); }
   charge=0;
+}
+function toggleCodexDebugMode(){
+  if(codexEnhancedActive() && codexAntiGravityActive() && codexEnhanced.until === Infinity){
+    codexEnhanced.until = 0;
+    codexAntiGravity.until = 0;
+    codexAntiGravity.armed = true;
+    codexAntiGravity.suppressed = false;
+  } else {
+    codexEnhanced.until = Infinity;
+    codexEnhanced.nextSound = 0;
+    codexAntiGravity.until = Infinity;
+    codexAntiGravity.armed = false;
+    codexAntiGravity.suppressed = false;
+    logEvent("ANTI-GRAVITY", "#65d46e");
+  }
+  updateCodexAntiGravityBarrier();
 }
 function setSettingsOpen(open){
   var menu = document.getElementById("settings-menu");
@@ -1599,7 +1965,11 @@ function setupMobileControls(){
   });
 }
 document.addEventListener("keydown", function(e){
+  if(e.code==="Escape" && boardBrowserOpen){ closeBoardBrowser(); e.preventDefault(); return; }
   if(e.code==="Escape" && settingsOpen){ setSettingsOpen(false); e.preventDefault(); return; }
+  if(e.code==="KeyB"){ toggleBoardBrowser(); e.preventDefault(); return; }
+  if(e.code==="KeyD"){ toggleDebug(); e.preventDefault(); return; }
+  if(e.code==="KeyG" && !e.repeat){ toggleCodexDebugMode(); e.preventDefault(); return; }
   if(debugMode){
     if(e.code==="ArrowLeft"){ keyLeft=true; e.preventDefault(); }
     if(e.code==="ArrowRight"){ keyRight=true; e.preventDefault(); }
@@ -1632,17 +2002,114 @@ document.addEventListener("keyup", function(e){
 window.addEventListener("resize", fitView);
 
 //// ---- boot ----
-window.onload = function(){
-  var g = new b2Vec2(0, GRAVITY);
-  world = new b2World(g, true);
+// Resolve an optional editor board before building. Startup is async because the hosted
+// ?board= path is a fetch (PROPOSAL §6 step 5/6): embedded BOARD and localStorage are
+// synchronous; ?board= is hosted-only (file:// fetch is blocked). No board => stock build.
+function selectBoard(){
+  try { if(typeof BOARD !== "undefined" && BOARD) return Promise.resolve(BOARD); } catch(e){}
+  try { var s = localStorage.getItem("pinball.board"); if(s) return Promise.resolve(parseBoardJson(s)); } catch(e){}
+  var m = /[?&]board=([^&]+)/.exec(location.search);
+  if(m && location.protocol !== "file:")
+    return fetchBoardJson(m[1]).catch(function(){ return null; });
+  return Promise.resolve(null);
+}
+// Build (or fully rebuild) the world and table from an optional board. A board switch at
+// runtime must discard and recreate the world — calling a builder against the live world
+// would duplicate bodies/sensors (PROPOSAL §6) — so this always starts from a fresh world.
+function initGame(board){
+  if(board && board.ballStart && fin(board.ballStart.x) && fin(board.ballStart.y))
+    BALL_STARTPOS = {x:board.ballStart.x, y:board.ballStart.y};
+  world = new b2World(new b2Vec2(0, GRAVITY), true);
   ball = addBall();
-  buildTable();
+  if(board) buildTableFromBoard(board); else buildTable();
   setupContacts();
   setBallShapeType();
-  fitView();
-  setupMobileControls();
-  step();
+}
+var loopRunning = false;
+window.onload = function(){
+  selectBoard().then(function(board){
+    initGame(board);
+    fitView();
+    setupMobileControls();
+    setupBoardBrowser();
+    loopRunning = true; step();   // single animation loop; switches rebuild in place
+  });
 };
+// Switch the live game to a different board (or the built-in table when board is null).
+// Reuses the running loop; rebuilds the world and resets game state via startGame().
+function switchToBoard(board){
+  try { initGame(board); } catch(e){ return "load failed: " + (e && e.message || e); }
+  startGame();
+  return null;   // success
+}
+
+//// ---- in-game board browser ----
+// Lists the site's official boards (boards/manifest.json, needs http — works on the
+// published site and on a local server) and offers a "Load from file…" picker that works
+// even from file:// (a user-chosen file read is not a fetch). Open with B.
+var boardBrowserOpen = false, boardBrowserResume = false, manifestLoaded = false;
+function openBoardBrowser(){
+  var ov = document.getElementById("boards-overlay"); if(!ov) return;
+  boardBrowserOpen = true; boardBrowserResume = paused; paused = true;
+  ov.classList.add("open");
+  if(!manifestLoaded) loadManifest();
+}
+function closeBoardBrowser(){
+  var ov = document.getElementById("boards-overlay"); if(!ov) return;
+  boardBrowserOpen = false; paused = boardBrowserResume;
+  ov.classList.remove("open");
+}
+function toggleBoardBrowser(){ boardBrowserOpen ? closeBoardBrowser() : openBoardBrowser(); }
+function boardMsg(text, ok){
+  var m = document.getElementById("boards-msg"); if(m){ m.textContent = text || ""; m.style.color = ok ? "#65d46e" : "#ff8a8a"; }
+}
+function applyBoard(board){
+  // Loading a board restarts the game; warn if one is in progress.
+  if(gameStarted && !confirm("Load this board? Your current game (score, multiplier, lights) will be lost.")) return;
+  var err = switchToBoard(board);
+  if(err) boardMsg(err, false); else closeBoardBrowser();
+}
+function loadManifest(){
+  var list = document.getElementById("boards-list"); if(!list) return;
+  list.textContent = "loading…";
+  fetch("boards/manifest.json").then(function(r){ return r.json(); }).then(function(items){
+    manifestLoaded = true; list.innerHTML = "";
+    (items || []).forEach(function(it){
+      var b = document.createElement("button");
+      b.className = "settings-action"; b.textContent = it.name + (it.description ? " — " + it.description : "");
+      b.onclick = function(){
+        boardMsg("loading " + it.name + "…", true);
+        fetchBoardJson("boards/" + it.file).then(applyBoard)
+          .catch(function(e){ boardMsg("couldn't load " + it.file + ": " + e.message, false); });
+      };
+      list.appendChild(b);
+    });
+    if(!list.children.length) list.textContent = "(no boards listed)";
+  }).catch(function(){
+    list.textContent = "Board list needs the site served over http. Use “Load from file…” below to open a board from disk.";
+  });
+}
+function setupBoardBrowser(){
+  var ov = document.getElementById("boards-overlay"); if(!ov) return;
+  var open = document.getElementById("boards-open");          if(open) open.onclick = openBoardBrowser;
+  var close = document.getElementById("boards-close");        if(close) close.onclick = closeBoardBrowser;
+  var builtin = document.getElementById("boards-builtin");    if(builtin) builtin.onclick = function(){ applyBoard(null); };
+  var fileBtn = document.getElementById("boards-file");
+  var fileIn = document.getElementById("boards-fileinput");
+  if(fileBtn && fileIn){
+    fileBtn.onclick = function(){ fileIn.click(); };
+    fileIn.onchange = function(ev){
+      var f = ev.target.files[0]; if(!f) return;
+      if(f.size > boardLimits().maxJsonBytes){ boardMsg("board JSON is too large", false); ev.target.value = ""; return; }
+      f.text().then(function(txt){
+        var board; try { board = parseBoardJson(txt); } catch(e){ boardMsg("invalid JSON: " + e.message, false); return; }
+        applyBoard(board);
+      });
+      ev.target.value = "";
+    };
+  }
+  ov.addEventListener("click", function(ev){ if(ev.target === ov) closeBoardBrowser(); });   // click backdrop to close
+}
 // Box2DWeb circle shape type id
 function setBallShapeType(){
   try { b2Shape_e_circle = Box2D.Collision.Shapes.b2Shape.e_circleShape; } catch(e){}
@@ -1651,6 +2118,7 @@ function resetWallJumpers(){
   [wallJumpers.left, wallJumpers.right].forEach(function(state){
     if(!state) return;
     state.complete = false;
+    state.cooldownUntil = 0;
     state.lights.forEach(function(L){ L.on = false; L.flash = 0; });
   });
 }

@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Minty Pinball</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; media-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+<title>Minnty Pinball</title>
 <style>
   html,body{margin:0;height:100%;background:#05050f;color:#fff;
     font-family:"Trebuchet MS",Arial,sans-serif;overflow:hidden}
@@ -32,6 +33,19 @@
     padding:28px 46px;border-radius:12px;border:2px solid #fff600;line-height:1.35}
   #msg .hint{display:block;margin-top:14px;font-size:15px;color:#9bb;line-height:1.7}
   kbd{background:#222;border:1px solid #444;border-radius:4px;padding:1px 6px}
+  #boards-overlay{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(2,4,12,.74)}
+  #boards-overlay.open{display:flex}
+  #boards-panel{width:min(92vw,440px);max-height:84vh;overflow:auto;background:#0b1022;border:2px solid #3b5bdb;
+    border-radius:14px;padding:18px;box-shadow:0 0 40px #14225f;color:#cdd6f4;font-family:system-ui,Arial,sans-serif}
+  #boards-panel h3{margin:0 0 4px;font-size:14px;letter-spacing:3px;color:#8fa6c8}
+  #boards-panel .sub{font-size:12px;color:#7f8aa3;margin-bottom:12px;line-height:1.5}
+  #boards-list{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+  #boards-panel button{display:block;width:100%;text-align:left;padding:10px 12px;border-radius:9px;border:1px solid #3b5bdb;
+    background:#101936;color:#fff;font:14px system-ui,Arial,sans-serif;cursor:pointer}
+  #boards-panel button:hover{background:#16224a}
+  #boards-actions{display:flex;gap:8px}
+  #boards-actions button{text-align:center}
+  #boards-msg{font-size:12px;margin-top:10px;min-height:1em;color:#7f8aa3}
   #mobile-controls,#settings-btn,#settings-menu{display:none}
   @media (pointer:coarse){
     html,body,#stage{touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
@@ -69,6 +83,7 @@
       <div class="row"><kbd>↓</kbd>/<kbd>Space</kbd> hold + release to launch</div>
       <div class="row"><kbd>↓</kbd>/<kbd>↑</kbd>/<kbd>Space</kbd> fire bottom return</div>
       <div class="row"><kbd>M</kbd> music on/off &nbsp; <kbd>S</kbd> next music track &nbsp; <kbd>P</kbd> pause</div>
+      <div class="row"><kbd>B</kbd> board browser</div>
     </div>
     <div>
       <div id="mult"></div>
@@ -88,6 +103,21 @@
     <div class="settings-title">SETTINGS</div>
     <button id="music-toggle" class="settings-action">Music On/Off</button>
     <button id="music-switch" class="settings-action">Switch Soundtrack</button>
+    <button id="boards-open" class="settings-action">Boards</button>
+  </div>
+  <div id="boards-overlay" aria-label="Board browser">
+    <div id="boards-panel">
+      <h3>BOARDS</h3>
+      <div class="sub">Press <kbd>B</kbd> to open/close. Choose an official board, or load one from your computer.</div>
+      <div id="boards-list"></div>
+      <div id="boards-actions">
+        <button id="boards-file">Load from file…</button>
+        <button id="boards-builtin">Built-in table</button>
+        <button id="boards-close">Close</button>
+      </div>
+      <input type="file" id="boards-fileinput" accept="application/json,.json" style="display:none">
+      <div id="boards-msg"></div>
+    </div>
   </div>
   <div id="mobile-controls" aria-label="Mobile controls">
     <button id="left-btn" class="touch-btn">LEFT</button>
@@ -98,9 +128,10 @@
 <!-- ?v= cache-buster: the host serves .js with a 30-day cache, so bump this version
      on each deploy to force browsers to fetch updated scripts (index.html itself is
      revalidated each visit, so the new version propagates immediately). -->
-<script src="box2d.js?v=13"></script>
-<script src="geom.js?v=13"></script>
-<script src="encouragements.js?v=13"></script>
-<script src="game.js?v=13"></script>
+<script src="box2d.js?v=18"></script>
+<script src="geom.js?v=18"></script>
+<script src="encouragements.js?v=18"></script>
+<script src="editor/board-schema.js?v=18"></script>
+<script src="game.js?v=18"></script>
 </body>
 </html>
