@@ -42,6 +42,7 @@ var CODEX_SPEED_BOOST = 1.006;
 var CODEX_MAX_BALL_SPEED = 78;
 var CODEX_EXTRA_GRAVITY = 1.15;
 var CODEX_ANTIGRAVITY_MS = 10000;
+var CODEX_ANTIGRAVITY_CHANCE = 0.15;
 var CODEX_ANTIGRAVITY_MULT = -0.5;
 var CODEX_ANTIGRAVITY_SUPPRESS_Y = 270;
 var CODEX_ANTIGRAVITY_RESUME_Y = 668;
@@ -568,7 +569,10 @@ function startCodexEnhancedMode(x, y){
 function codexAntiGravityActive(){ return codexEnhancedActive() && nowMs() < codexAntiGravity.until; }
 function triggerCodexAntiGravity(x, y){
   if(!codexEnhancedActive() || !codexAntiGravity.armed || codexAntiGravityActive()) return;
-  codexAntiGravity.until = nowMs() + CODEX_ANTIGRAVITY_MS;
+  if(Math.random() >= CODEX_ANTIGRAVITY_CHANCE) return;
+  var until = nowMs() + CODEX_ANTIGRAVITY_MS;
+  codexAntiGravity.until = until;
+  if(codexEnhanced.until < until) codexEnhanced.until = until;
   codexAntiGravity.armed = false;
   codexAntiGravity.suppressed = false;
   flash(x, y, 150, "#65d46e");
