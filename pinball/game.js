@@ -46,6 +46,12 @@ var CODEX_ANTIGRAVITY_CHANCE = 0.15;
 var CODEX_ANTIGRAVITY_MULT = -0.5;
 var CODEX_ANTIGRAVITY_SUPPRESS_Y = 270;
 var CODEX_ANTIGRAVITY_RESUME_Y = 668;
+var CODEX_SUPER_DORMANT_SCORE_MIN = 1000;
+var CODEX_SUPER_DORMANT_SCORE_MAX = 2000;
+var CODEX_SUPER_DORMANT_COOLDOWN_MS = 300;
+var CODEX_BARRIER_SCORE_MIN = 1;
+var CODEX_BARRIER_SCORE_MAX = 1000;
+var CODEX_BARRIER_HIT_COOLDOWN_MS = 300;
 
 //// ---- Box2D aliases ----
 var b2Vec2 = Box2D.Common.Math.b2Vec2,
@@ -108,7 +114,9 @@ var channelDeflectSpeed = 56;
 var channelDeflectTarget = null;
 var lightHitQueue = [];   // group-light contacts this step, resolved to the single closest
 var codexEnhanced = {until:0, nextSound:0};
+var codexSuperDormantCooldownUntil = 0;
 var codexAntiGravity = {until:0, armed:true, suppressed:false};
+var codexBarrierHitCooldownUntil = 0;
 var codexBarrierBodies = [];
 // ENCOURAGEMENTS lives in encouragements.js (1000 daft words), loaded before this file.
 function updateCamera(){
@@ -506,7 +514,13 @@ function resolveLightHits(){
   var seen = [];
   lightHitQueue.forEach(function(ud){
     var L = ud.light, g = ud.group && lightGroups[ud.group];
-    if(ud.group === "curve" && codexEnhancedActive()) return;
+    if(ud.group === "curve" && codexEnhancedActive()){
+      if(seen.indexOf(L) >= 0) return;
+      seen.push(L);
+      var sdx = L.x-bx, sdy = L.y-by;
+      cands.push({ud:ud, d:sdx*sdx + sdy*sdy, superDormant:true});
+      return;
+    }
     if(g && nowMs() < g.cooldownUntil) return;
     if(L.on && !(g && g.complete)) return;           // already on (and group not full): nothing to do
     if(seen.indexOf(L) >= 0) return;
@@ -515,7 +529,10 @@ function resolveLightHits(){
     cands.push({ud:ud, d:dx*dx + dy*dy});
   });
   var pick = pickNearest(cands);
-  if(pick) hitLight(pick.ud);
+  if(pick){
+    if(pick.superDormant) hitCodexSuperDormant(pick.ud.light.x, pick.ud.light.y);
+    else hitLight(pick.ud);
+  }
   lightHitQueue.length = 0;
 }
 function hitLight(ud){
@@ -555,6 +572,17 @@ function hitBonusLight(ud){
 function setCodexArmed(on){
   if(orionCodex){ orionCodex.on = on; orionCodex.flash = on ? 1 : 0; }
 }
+function codexSuperDormantScore(){ return CODEX_SUPER_DORMANT_SCORE_MIN + Math.floor(Math.random() * (CODEX_SUPER_DORMANT_SCORE_MAX - CODEX_SUPER_DORMANT_SCORE_MIN + 1)); }
+function hitCodexSuperDormant(x, y){
+  var now = nowMs();
+  if(now < codexSuperDormantCooldownUntil) return;
+  codexSuperDormantCooldownUntil = now + CODEX_SUPER_DORMANT_COOLDOWN_MS;
+  var award = codexSuperDormantScore();
+  addScore(award, x, y);
+  encourageCodexSuper(x, y - 20);
+  playSound("pinball_button_on", 1);
+  playSound("toggle", 0.85);
+}
 function codexEnhancedActive(){ return nowMs() < codexEnhanced.until; }
 function codexVelocityMult(){ return codexEnhancedActive() ? CODEX_VELOCITY_MULT : 1; }
 function codexFlipperMult(){ return codexEnhancedActive() ? CODEX_FLIPPER_MULT : 1; }
@@ -567,6 +595,20 @@ function startCodexEnhancedMode(x, y){
   addFloatText("CODEX OVERDRIVE", x, y - 70, "#d780ff", 110, 38, true);
 }
 function codexAntiGravityActive(){ return codexEnhancedActive() && nowMs() < codexAntiGravity.until; }
+function codexBarrierScore(){ return CODEX_BARRIER_SCORE_MIN + Math.floor(Math.random() * (CODEX_BARRIER_SCORE_MAX - CODEX_BARRIER_SCORE_MIN + 1)); }
+function hitCodexBarrier(contact){
+  if(!codexAntiGravityActive()) return;
+  var b = ballBodyFrom(contact); if(!b) return;
+  if(b.GetLinearVelocity().y > 0) return;
+  var now = nowMs();
+  if(now < codexBarrierHitCooldownUntil) return;
+  codexBarrierHitCooldownUntil = now + CODEX_BARRIER_HIT_COOLDOWN_MS;
+  var bp = b.GetPosition(), x = bp.x * WORLD_SCALE, y = bp.y * WORLD_SCALE;
+  addScore(codexBarrierScore(), x, y);
+  encourageCodexBarrier(x, y - 20);
+  flash(x, y, 70, "#42c7ff");
+  playSound("pinball_button_on", 0.9);
+}
 function triggerCodexAntiGravity(x, y){
   if(!codexEnhancedActive() || !codexAntiGravity.armed || codexAntiGravityActive()) return;
   if(Math.random() >= CODEX_ANTIGRAVITY_CHANCE) return;
@@ -582,7 +624,18 @@ function armCodexAntiGravity(){
   if(!codexAntiGravityActive()) codexAntiGravity.armed = true;
 }
 function addCodexAntiGravityBarrier(){
-  var pts = [{x:225,y:950}, {x:300,y:1000}, {x:430,y:930}, {x:585,y:850}];
+  var start = {x:225,y:845}, end = {x:585,y:850};
+  var dx = end.x - start.x, dy = end.y - start.y;
+  var mid = {x:(start.x + end.x) / 2, y:(start.y + end.y) / 2};
+  var r = Math.sqrt(dx*dx + dy*dy) / 2;
+  var nx = -dy / (2*r), ny = dx / (2*r);
+  var pts = [];
+  for(var i=0; i<=16; i++){
+    var t = i / 16;
+    var along = (t - 0.5) * 2 * r;
+    var down = Math.sin(t * Math.PI) * r;
+    pts.push({x:mid.x + dx/(2*r)*along + nx*down, y:mid.y + dy/(2*r)*along + ny*down});
+  }
   codexBarrierBodies.length = 0;
   for(var i=0; i<pts.length-1; i++){
     var b = addEdge(pts[i], pts[i+1], 0.2, {type:"codexbarrier"});
@@ -597,6 +650,10 @@ function updateCodexAntiGravityBarrier(){
   }
 }
 function letterLanePass(){
+  if(codexEnhancedActive()){
+    if(orionCodex) hitCodexSuperDormant(orionCodex.x, orionCodex.y);
+    return;
+  }
   if(!letterArmed || nextLetter >= letterLights.length) return;
   addScore(ROUTER_GATE_SCORE[routerLevel] * multiplier, 224, 210);
   routerLevel = Math.min(routerLevel+1, ROUTER_GATE_SCORE.length-1);
@@ -832,6 +889,7 @@ function setupContacts(){
       if(ud.type === "bonuslight"){ hitBonusLight(ud); }
       if(ud.type === "letterlane") letterLanePass();
       if(ud.type === "channeldeflect") channelDeflectHit();
+      if(ud.type === "codexbarrier") hitCodexBarrier(c);
     });
   };
   L.PreSolve = function(c){
@@ -894,8 +952,32 @@ function flash(x,y,r,col){ flashTimers.push({x:x,y:y,r:r,t:1,col:col}); }
 function addFloatText(text, x, y, col, frames, size, fx, logCol){ floatingTexts.push({text:text, x:x, y:y, col:col||"#fff600", t:frames||60, max:frames||60, size:size||72, fx:fx||false, phase:Math.random()*Math.PI*2}); logEvent(text, logCol || col || "#fff600"); }
 // Bright candy palette for encouragement words
 var ENCOURAGE_COLORS = ["#ff9ed8", "#fff27a", "#a8ff8f", "#ffb347", "#7afcff", "#ffa6f0", "#b69bff"];
+var CODEX_SUPER_WORDS = ["BLAM!", "KERPOW!", "KAPOW!", "ZAP!", "WHAM!", "BOOM!", "THWACK!", "BOSH!"];
+var CODEX_SUPER_ORANGE = "#ff8c1a";
+var CODEX_BARRIER_WORDS = [
+  "Fromage!", "Baguette!", "Croissant!", "Escargot!", "Moustache!", "Camembert!", "Cornichon!", "Pamplemousse!", "Chaussette!", "Pantoufle!",
+  "Grenouille!", "Hibou!", "Canard!", "Lapin!", "Marmotte!", "Blaireau!", "Limace!", "Papillon!", "Coccinelle!", "Sardine!",
+  "Brioche!", "Tartine!", "Confiture!", "Moutarde!", "Omelette!", "Ratatouille!", "Cassoulet!", "Crepe!", "Galette!", "Eclair!",
+  "Citron!", "Fraise!", "Myrtille!", "Poireau!", "Artichaut!", "Radis!", "Navet!", "Betterave!", "Haricot!", "Courgette!",
+  "Chapeau!", "Beret!", "Parapluie!", "Bicyclette!", "Trottinette!", "Valise!", "Brosse!", "Savon!", "Serviette!", "Sel de Bain!",
+  "Bidule!", "Machin!", "Trucmuche!", "Zigzag!", "Patatra!", "Pouet!", "Bof!", "Hopla!", "Ohlala!", "Coucou!",
+  "Nuage!", "Lune!", "Soleil!", "Etoile!", "Pluie!", "Brume!", "Mistral!", "Flocon!", "Tonnerre!", "Arc-en-ciel!",
+  "Flaneur!", "Bonjour!", "Bonsoir!", "Merci!", "Pardon!", "Voila!", "Allez!", "Bizarre!", "Rigolo!", "Loufoque!",
+  "Chouette!", "Peluche!", "Biscotte!", "Carafe!", "Marmite!", "Trombone!", "Clochette!", "Tambour!", "Accordeon!", "Bateau!",
+  "Chateau!", "Jardin!", "Fontaine!", "Casserole!", "Fourchette!", "Cuillere!", "Assiette!", "Torchon!", "Placard!", "Tabouret!"
+];
+var CODEX_BARRIER_BLUE = "#42c7ff";
 var ENCOURAGE_MIN_DIST = 110;   // keep encouragement words from overlapping
 function encourage(x, y){
+  encourageWord(x, y, ENCOURAGEMENTS, ENCOURAGE_COLORS[Math.floor(Math.random()*ENCOURAGE_COLORS.length)]);
+}
+function encourageCodexSuper(x, y){
+  encourageWord(x, y, CODEX_SUPER_WORDS, CODEX_SUPER_ORANGE);
+}
+function encourageCodexBarrier(x, y){
+  encourageWord(x, y, CODEX_BARRIER_WORDS, CODEX_BARRIER_BLUE);
+}
+function encourageWord(x, y, words, col){
   var dx = (Math.random()*2-1) * 60;
   var ex = x + dx, ey = y - 45;
   // if too close to an existing encouragement word, skip it rather than overlap
@@ -904,17 +986,16 @@ function encourage(x, y){
     var ddx = ft.x-ex, ddy = ft.y-ey;
     if(ddx*ddx + ddy*ddy < ENCOURAGE_MIN_DIST*ENCOURAGE_MIN_DIST) return;
   }
-  var col = ENCOURAGE_COLORS[Math.floor(Math.random()*ENCOURAGE_COLORS.length)];
-  addFloatText(ENCOURAGEMENTS[Math.floor(Math.random()*ENCOURAGEMENTS.length)], ex, ey, col, 60, 42, true);
-  spawnSparkles(ex, ey, 30);
+  addFloatText(words[Math.floor(Math.random()*words.length)], ex, ey, col, 60, 42, true);
+  spawnSparkles(ex, ey, 30, (col === CODEX_SUPER_ORANGE || col === CODEX_BARRIER_BLUE) ? col : null);
 }
-function spawnSparkles(x, y, n){
+function spawnSparkles(x, y, n, col){
   for(var i=0;i<n;i++){
     var ang = Math.random()*Math.PI*2, spd = 3 + Math.random()*7;
     sparkles.push({
       x:x, y:y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd - 2,
       t:1, decay:0.012 + Math.random()*0.025, r:2 + Math.random()*4,
-      col:ENCOURAGE_COLORS[Math.floor(Math.random()*ENCOURAGE_COLORS.length)]
+      col:col || ENCOURAGE_COLORS[Math.floor(Math.random()*ENCOURAGE_COLORS.length)]
     });
   }
 }
@@ -1592,6 +1673,7 @@ function drawWorld(){
       drawFixture(b, f, ud && ud.type==="pop" ? "#ff3df0" : null);
     }
   }
+  drawCodexBarrier();
   // lights
   drawLights();
   // plunger (animated launcher in the plunger lane)
@@ -1639,15 +1721,41 @@ function roundRect(x,y,w,h,r){
   ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
   ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
+function codexSuperDormantLight(L){
+  return codexSuperDormantLightIndex(L) >= 0;
+}
+function codexSuperDormantLightIndex(L){
+  if(!codexEnhancedActive()) return -1;
+  var seq = lightGroups.curve ? lightGroups.curve.lights.slice() : [];
+  if(orionCodex) seq.push(orionCodex);
+  return seq.indexOf(L);
+}
+function drawCodexBarrier(){
+  if(!codexAntiGravityActive()) return;
+  ctx.save();
+  ctx.lineWidth = 7;
+  ctx.strokeStyle = CODEX_BARRIER_BLUE;
+  ctx.shadowColor = CODEX_BARRIER_BLUE;
+  ctx.shadowBlur = 18 + 8*Math.sin(animT*0.2);
+  for(var i=0; i<codexBarrierBodies.length; i++){
+    var b = codexBarrierBodies[i];
+    if(!b.IsActive()) continue;
+    for(var f = b.GetFixtureList(); f; f = f.GetNext()) drawFixture(b, f);
+  }
+  ctx.restore();
+}
 function drawLights(){
   for(var i=0;i<lights.length;i++){
     var L = lights[i];
-    var lit = L.on || L.flash > 0.5;
+    var superDormantIndex = codexSuperDormantLightIndex(L);
+    var superDormant = superDormantIndex >= 0;
+    var lit = superDormant ? (superDormantIndex === Math.floor(animT / 8) % ((lightGroups.curve ? lightGroups.curve.lights.length : 0) + (orionCodex ? 1 : 0))) : (L.on || L.flash > 0.5);
     ctx.beginPath(); ctx.arc(L.x, L.y, L.r, 0, 7);
     if(lit){
       ctx.fillStyle = L.col; ctx.fill();
       var halo = L.r + 8 + (L.flash>0?6*L.flash:0);
-      if(L.pulse && L.on) halo += 6 + 6*Math.sin(animT*0.18);   // armed-lane pulse
+      if(superDormant) halo += 10;
+      else if(L.pulse && L.on) halo += 6 + 6*Math.sin(animT*0.18);   // armed-lane pulse
       ctx.save(); ctx.globalAlpha = 0.35; ctx.beginPath();
       ctx.arc(L.x, L.y, halo, 0, 7);
       ctx.fillStyle = L.col; ctx.fill(); ctx.restore();
