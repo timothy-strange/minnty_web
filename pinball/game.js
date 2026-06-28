@@ -35,13 +35,15 @@ var BIG_SCORE_COMBO_MS = 500;
 var BIG_SCORE_COOLDOWN_MS = 60000;
 var MULTIPLIER_STEP = 0.1;
 var LIGHT_BANK_COOLDOWN_MS = 400;
-var CODEX_ENHANCED_MS = 45000;
+var CODEX_ENHANCED_BASE_MS = 45000;
+var CODEX_ENHANCED_STEP_MS = 20000;
 var CODEX_VELOCITY_MULT = 2;
 var CODEX_FLIPPER_MULT = 3;
 var CODEX_SPEED_BOOST = 1.006;
 var CODEX_MAX_BALL_SPEED = 78;
 var CODEX_EXTRA_GRAVITY = 1.15;
-var CODEX_ANTIGRAVITY_MS = 10000;
+var CODEX_ANTIGRAVITY_BASE_MS = 10000;
+var CODEX_ANTIGRAVITY_STEP_MS = 5000;
 var CODEX_ANTIGRAVITY_CHANCE = 0.15;
 var CODEX_ANTIGRAVITY_MULT = -0.5;
 var CODEX_ANTIGRAVITY_SUPPRESS_Y = 270;
@@ -114,6 +116,7 @@ var channelDeflectSpeed = 56;
 var channelDeflectTarget = null;
 var lightHitQueue = [];   // group-light contacts this step, resolved to the single closest
 var codexEnhanced = {until:0, nextSound:0};
+var codexEnhancedTriggers = 0, codexEnhancedLevel = 0;
 var codexSuperDormantCooldownUntil = 0;
 var codexAntiGravity = {until:0, armed:true, suppressed:false};
 var codexBarrierHitCooldownUntil = 0;
@@ -578,18 +581,24 @@ function hitCodexSuperDormant(x, y){
   if(now < codexSuperDormantCooldownUntil) return;
   codexSuperDormantCooldownUntil = now + CODEX_SUPER_DORMANT_COOLDOWN_MS;
   var award = codexSuperDormantScore();
-  addScore(award, x, y);
-  encourageCodexSuper(x, y - 20);
+  addScore(award);
+  addCameraFloatText("+" + award.toLocaleString(), x, y + 62, CODEX_BARRIER_BLUE, 176, 44, true);
+  encourageCodexSuper(x, y + 14);
   playSound("pinball_button_on", 1);
   playSound("toggle", 0.85);
 }
 function codexEnhancedActive(){ return nowMs() < codexEnhanced.until; }
 function codexVelocityMult(){ return codexEnhancedActive() ? CODEX_VELOCITY_MULT : 1; }
 function codexFlipperMult(){ return codexEnhancedActive() ? CODEX_FLIPPER_MULT : 1; }
+function codexEnhancedDurationMs(level){ return CODEX_ENHANCED_BASE_MS + CODEX_ENHANCED_STEP_MS * level; }
+function codexAntiGravityDurationMs(){ return CODEX_ANTIGRAVITY_BASE_MS + CODEX_ANTIGRAVITY_STEP_MS * codexEnhancedLevel; }
+function resetCodexDurationEscalation(){ codexEnhancedTriggers = 0; }
 function startCodexEnhancedMode(x, y){
   var now = nowMs();
   if(now < codexEnhanced.until) return;
-  codexEnhanced.until = now + CODEX_ENHANCED_MS;
+  codexEnhancedLevel = codexEnhancedTriggers;
+  codexEnhanced.until = now + codexEnhancedDurationMs(codexEnhancedLevel);
+  codexEnhancedTriggers++;
   codexEnhanced.nextSound = 0;
   flash(x, y, 120, "#9b6bff");
   addFloatText("CODEX OVERDRIVE", x, y - 70, "#d780ff", 110, 38, true);
@@ -612,7 +621,7 @@ function hitCodexBarrier(contact){
 function triggerCodexAntiGravity(x, y){
   if(!codexEnhancedActive() || !codexAntiGravity.armed || codexAntiGravityActive()) return;
   if(Math.random() >= CODEX_ANTIGRAVITY_CHANCE) return;
-  var until = nowMs() + CODEX_ANTIGRAVITY_MS;
+  var until = nowMs() + codexAntiGravityDurationMs();
   codexAntiGravity.until = until;
   if(codexEnhanced.until < until) codexEnhanced.until = until;
   codexAntiGravity.armed = false;
@@ -666,6 +675,7 @@ function letterLanePass(){
   playSound("letter");
   startCodexEnhancedMode(L.x, L.y);
   if(nextLetter >= letterLights.length){   // all 7 lit -> missile launch reward
+    resetCodexDurationEscalation();
     var factor = multiplier / 2;
     if(factor < 1) factor = multiplier;
     var missileScore = Math.round(score * 0.05 * factor);
@@ -950,10 +960,10 @@ function flash(x,y,r,col){ flashTimers.push({x:x,y:y,r:r,t:1,col:col}); }
 // logCol (optional) sets the left-panel colour independently of the on-screen colour
 // — used to give an associated headline + sub-line a single shared log colour.
 function addFloatText(text, x, y, col, frames, size, fx, logCol){ floatingTexts.push({text:text, x:x, y:y, col:col||"#fff600", t:frames||60, max:frames||60, size:size||72, fx:fx||false, phase:Math.random()*Math.PI*2}); logEvent(text, logCol || col || "#fff600"); }
+function addCameraFloatText(text, x, y, col, frames, size, codexPulse){ floatingTexts.push({text:text, x:x, y:y, col:col||"#fff600", t:frames||60, max:frames||60, size:size||72, fx:true, camStartX:cam.x, camStartY:cam.y, codexPulse:!!codexPulse, phase:Math.random()*Math.PI*2}); logEvent(text, col || "#fff600"); }
 // Bright candy palette for encouragement words
 var ENCOURAGE_COLORS = ["#ff9ed8", "#fff27a", "#a8ff8f", "#ffb347", "#7afcff", "#ffa6f0", "#b69bff"];
 var CODEX_SUPER_WORDS = ["BLAM!", "KERPOW!", "KAPOW!", "ZAP!", "WHAM!", "BOOM!", "THWACK!", "BOSH!"];
-var CODEX_SUPER_ORANGE = "#ff8c1a";
 var CODEX_BARRIER_WORDS = [
   "Fromage!", "Baguette!", "Croissant!", "Escargot!", "Moustache!", "Camembert!", "Cornichon!", "Pamplemousse!", "Chaussette!", "Pantoufle!",
   "Grenouille!", "Hibou!", "Canard!", "Lapin!", "Marmotte!", "Blaireau!", "Limace!", "Papillon!", "Coccinelle!", "Sardine!",
@@ -972,7 +982,8 @@ function encourage(x, y){
   encourageWord(x, y, ENCOURAGEMENTS, ENCOURAGE_COLORS[Math.floor(Math.random()*ENCOURAGE_COLORS.length)]);
 }
 function encourageCodexSuper(x, y){
-  encourageWord(x, y, CODEX_SUPER_WORDS, CODEX_SUPER_ORANGE);
+  var word = CODEX_SUPER_WORDS[Math.floor(Math.random() * CODEX_SUPER_WORDS.length)];
+  addCameraFloatText(word, x, y, CODEX_BARRIER_BLUE, 176, 42, true);
 }
 function encourageCodexBarrier(x, y){
   encourageWord(x, y, CODEX_BARRIER_WORDS, CODEX_BARRIER_BLUE);
@@ -987,7 +998,7 @@ function encourageWord(x, y, words, col){
     if(ddx*ddx + ddy*ddy < ENCOURAGE_MIN_DIST*ENCOURAGE_MIN_DIST) return;
   }
   addFloatText(words[Math.floor(Math.random()*words.length)], ex, ey, col, 60, 42, true);
-  spawnSparkles(ex, ey, 30, (col === CODEX_SUPER_ORANGE || col === CODEX_BARRIER_BLUE) ? col : null);
+  spawnSparkles(ex, ey, 30, col === CODEX_BARRIER_BLUE ? col : null);
 }
 function spawnSparkles(x, y, n, col){
   for(var i=0;i<n;i++){
@@ -1644,14 +1655,29 @@ function logEvent(text, col){
   }
 }
 // Right panel: large score (wraps) with the current multiplier above it.
-var scoreEl, multEl, lastScoreShown = -1, lastMultShown = -1;
+var scoreEl, multEl, codexTimerEl, lastScoreShown = -1, lastMultShown = -1, lastCodexTimerShown = "";
+function codexCountdownState(){
+  var now = nowMs();
+  if(codexAntiGravityActive()) return {text:isFinite(codexAntiGravity.until) ? String(Math.max(0, Math.ceil((codexAntiGravity.until - now) / 1000))) : "∞", anti:true};
+  if(codexEnhancedActive()) return {text:isFinite(codexEnhanced.until) ? String(Math.max(0, Math.ceil((codexEnhanced.until - now) / 1000))) : "∞", anti:false};
+  return null;
+}
 function updatePanels(){
   if(!panelsVisible) return;
-  if(!scoreEl){ scoreEl = document.getElementById("bigscore"); multEl = document.getElementById("mult"); }
+  if(!scoreEl){ scoreEl = document.getElementById("bigscore"); multEl = document.getElementById("mult"); codexTimerEl = document.getElementById("codex-status"); }
   if(score !== lastScoreShown){ scoreEl.textContent = score.toLocaleString(); lastScoreShown = score; }
   if(multiplier !== lastMultShown){
     multEl.innerHTML = '<div class="mlabel">MULTIPLIER</div><div class="mval">×' + multiplierText() + '</div>';
     lastMultShown = multiplier;
+  }
+  if(codexTimerEl){
+    var state = codexCountdownState();
+    var shown = state ? (state.anti ? "A" : "S") + state.text : "";
+    if(shown !== lastCodexTimerShown){
+      codexTimerEl.className = state ? ("codex-active" + (state.anti ? " anti" : "")) : "";
+      codexTimerEl.innerHTML = state ? '<div class="codex-title">' + (state.anti ? 'Anti-gravity' : 'Quantum Mode') + '</div><div class="codex-timer">' + state.text + '</div>' : "";
+      lastCodexTimerShown = shown;
+    }
   }
 }
 function drawWorld(){
@@ -1774,6 +1800,10 @@ function drawFloatingTexts(){
     var a = ft.t / ft.max;
     var rise = (ft.max-ft.t)*0.55;
     var px = ft.x, py = ft.y - rise;
+    if(ft.camStartX != null){
+      px += cam.x - ft.camStartX;
+      py += cam.y - ft.camStartY;
+    }
     if(ft.fx){
       // pop-in overshoot + glow, bright solid colour
       var age = ft.max - ft.t;
@@ -1785,8 +1815,15 @@ function drawFloatingTexts(){
       ctx.font = "bold " + (ft.size||42) + "px 'Trebuchet MS',Arial,sans-serif";
       ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.8)";
       ctx.strokeText(ft.text, 0, 0);
-      ctx.shadowColor = ft.col; ctx.shadowBlur = 14;
-      ctx.fillStyle = ft.col; ctx.fillText(ft.text, 0, 0);
+      if(ft.codexPulse){
+        var pulse = 0.5 + 0.5*Math.sin(animT*0.055 + ft.phase);
+        ctx.shadowColor = CODEX_BARRIER_BLUE; ctx.shadowBlur = 12 + 20*pulse;
+        ctx.fillStyle = pulse > 0.5 ? "#c8f6ff" : CODEX_BARRIER_BLUE;
+      } else {
+        ctx.shadowColor = ft.col; ctx.shadowBlur = 14;
+        ctx.fillStyle = ft.col;
+      }
+      ctx.fillText(ft.text, 0, 0);
       ctx.restore();
     } else {
       ctx.globalAlpha = Math.max(0, Math.min(1, a));
@@ -1839,6 +1876,14 @@ function drawHUD(){
   ctx.fillText(score.toLocaleString(), pad+9, pad+15);
   ctx.fillStyle = "#8fa6c8"; ctx.font = "10px 'Trebuchet MS',Arial,sans-serif";
   ctx.fillText("MULTIPLIER  x" + multiplierText(), pad+9, pad+34);
+  var state = codexCountdownState();
+  if(state){
+    ctx.textAlign = "right";
+    ctx.fillStyle = state.anti ? "#65d46e" : "#42c7ff";
+    ctx.font = "bold 16px 'Courier New',monospace";
+    ctx.fillText(state.text, pad + w - 8, pad + 6);
+    ctx.textAlign = "start";
+  }
   if(paused){
     ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0,0,canvas.width,canvas.height);
     ctx.fillStyle = "#fff600"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -1981,12 +2026,14 @@ function startGame(){
   lightHitQueue.length = 0;
   codexEnhanced.until = 0;
   codexEnhanced.nextSound = 0;
+  codexEnhancedTriggers = 0;
+  codexEnhancedLevel = 0;
   codexAntiGravity.until = 0;
   codexAntiGravity.armed = true;
   codexAntiGravity.suppressed = false;
   updateCodexAntiGravityBarrier();
   if(logEl) logEl.innerHTML = "";
-  lastScoreShown = -1; lastMultShown = -1;
+  lastScoreShown = -1; lastMultShown = -1; lastCodexTimerShown = null;
   resetWallJumpers();
   letterArmed=false; nextLetter=0; letterBankResetTimer=0; setCodexArmed(false);
   document.getElementById("msg").style.display="none";

@@ -22,6 +22,14 @@
   #help{display:none;font-size:13px;line-height:1.65;color:#9bb;text-align:left;margin-bottom:auto}
   #help .htitle{font-size:14px;color:#8fa6c8;letter-spacing:3px;margin-bottom:8px}
   #help .row{margin-bottom:4px}
+  #codex-status{display:none;margin-top:20px;text-align:right}
+  #codex-status.codex-active{display:block}
+  .codex-title{font-size:30px;font-weight:bold;line-height:1.02;color:#42c7ff;
+    text-shadow:0 0 12px #42c7ff,0 0 26px #9b6bff;animation:quantum-pulse 2.4s ease-in-out infinite}
+  .codex-timer{font:bold 34px/1.04 'Courier New',monospace;color:#42c7ff;text-shadow:0 0 14px #42c7ff}
+  #codex-status.anti .codex-title{color:#65d46e;text-shadow:0 0 12px #65d46e,0 0 26px #fff600}
+  #codex-status.anti .codex-timer{color:#65d46e;text-shadow:0 0 14px #65d46e}
+  @keyframes quantum-pulse{0%,100%{filter:hue-rotate(0deg) brightness(1)}50%{filter:hue-rotate(55deg) brightness(1.55)}}
   #mult{margin-bottom:22px}
   .mlabel{font-size:14px;color:#8fa6c8;letter-spacing:3px}
   .mval{font-size:52px;font-weight:bold;color:#fff600;line-height:1.05}
@@ -84,6 +92,7 @@
       <div class="row"><kbd>↓</kbd>/<kbd>↑</kbd>/<kbd>Space</kbd> fire bottom return</div>
       <div class="row"><kbd>M</kbd> music on/off &nbsp; <kbd>S</kbd> next music track &nbsp; <kbd>P</kbd> pause</div>
       <div class="row"><kbd>B</kbd> board browser</div>
+      <div id="codex-status"></div>
     </div>
     <div>
       <div id="mult"></div>
@@ -128,10 +137,10 @@
 <!-- ?v= cache-buster: the host serves .js with a 30-day cache, so bump this version
      on each deploy to force browsers to fetch updated scripts (index.html itself is
      revalidated each visit, so the new version propagates immediately). -->
-<script src="box2d.js?v=20"></script>
-<script src="geom.js?v=20"></script>
-<script src="encouragements.js?v=20"></script>
-<script src="editor/board-schema.js?v=20"></script>
-<script src="game.js?v=20"></script>
+<script src="box2d.js?v=21"></script>
+<script src="geom.js?v=21"></script>
+<script src="encouragements.js?v=21"></script>
+<script src="editor/board-schema.js?v=21"></script>
+<script src="game.js?v=21"></script>
 </body>
 </html>
